@@ -3,7 +3,7 @@ import { buildApp } from '../src/app.js';
 
 describe('GET /health', () => {
   it('returns the health envelope', async () => {
-    const app = buildApp();
+    const app = buildApp({ dbPath: ':memory:' });
     try {
       const response = await app.inject({ method: 'GET', url: '/health' });
       expect(response.statusCode).toBe(200);
@@ -14,7 +14,7 @@ describe('GET /health', () => {
   });
 
   it('rate limits requests after the configured maximum', async () => {
-    const app = buildApp({ rateLimit: { max: 1, timeWindow: '1 minute' } });
+    const app = buildApp({ dbPath: ':memory:', rateLimit: { max: 1, timeWindow: '1 minute' } });
     try {
       const first = await app.inject({ method: 'GET', url: '/health' });
       const second = await app.inject({ method: 'GET', url: '/health' });
