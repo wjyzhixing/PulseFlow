@@ -2,10 +2,12 @@ import { load } from 'cheerio';
 import mammoth from 'mammoth';
 import { ImportError, MAX_IMPORT_BYTES } from './errors.js';
 import type { RequirementSection } from './types.js';
+import { preflightDocx } from './zip-preflight.js';
 
 export { MAX_IMPORT_BYTES };
 
 export const DOCX_MIME_TYPE = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
+export const MAX_DOCX_HTML_BYTES = 8 * 1024 * 1024;
 
 export interface DocxUploadMetadata {
   filename: string;
@@ -28,13 +30,20 @@ export function validateDocxUploadMetadata(metadata: DocxUploadMetadata): void {
 
 export async function parseDocxSections(buffer: Buffer): Promise<RequirementSection[]> {
   validateBuffer(buffer);
+  preflightDocx(buffer);
 
+  let html: string;
   try {
-    const { value } = await mammoth.convertToHtml({ buffer });
-    return parseDocxHtml(value);
+    ({ value: html } = await mammoth.convertToHtml({ buffer }));
   } catch {
     throw new ImportError('docx.invalid', 'This is not a valid .docx document. Re-save it as .docx in Microsoft Word or LibreOffice and try again.');
   }
+
+  if (Buffer.byteLength(html, 'utf8') > MAX_DOCX_HTML_BYTES) {
+    throw new ImportError('docx.too_large', 'DOCX conversion output exceeds the 8 MiB limit. Reduce the document contents and try again.');
+  }
+
+  return parseDocxHtml(html);
 }
 
 function validateBuffer(buffer: Buffer): void {
@@ -42,7 +51,7 @@ function validateBuffer(buffer: Buffer): void {
     throw new ImportError('input.empty', 'Choose a non-empty DOCX file and try again.');
   }
   if (buffer.byteLength > MAX_IMPORT_BYTES) {
-    throw new ImportError('input.too_large', 'DOCX files must be 10 MB or smaller. Reduce the document size and try again.');
+    throw new ImportError('input.too_large', 'DOCX files must be 10 MiB or smaller. Reduce the document size and try again.');
   }
 }
 
@@ -59,7 +68,7 @@ function parseDocxHtml(html: string): RequirementSection[] {
     }
   };
 
-  $('body').children('h1, h2, h3, h4, h5, h6, p').each((_index, element) => {
+  $('h1, h2, h3, h4, h5, h6, p').each((_index, element) => {
     const content = $(element).text().trim();
     if (!content) return;
 

@@ -3,7 +3,8 @@ export type ImportErrorCode =
   | 'input.too_large'
   | 'file.unsupported'
   | 'file.mime_unsupported'
-  | 'docx.invalid';
+  | 'docx.invalid'
+  | 'docx.too_large';
 
 export const MAX_IMPORT_BYTES = 10 * 1024 * 1024;
 

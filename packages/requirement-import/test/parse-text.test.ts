@@ -21,7 +21,7 @@ describe('parseTextSections', () => {
 
   it('rejects text larger than the import byte limit with an actionable error', () => {
     expect(() => parseTextSections('x'.repeat(10 * 1024 * 1024 + 1))).toThrowError(
-      expect.objectContaining({ code: 'input.too_large', message: expect.stringContaining('10 MB') }),
+      expect.objectContaining({ code: 'input.too_large', message: expect.stringContaining('10 MiB') }),
     );
   });
 });

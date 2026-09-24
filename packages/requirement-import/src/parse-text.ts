@@ -5,7 +5,7 @@ const headingPattern = /^\s{0,3}(#{1,6})\s+(.+?)\s*#*\s*$/;
 
 export function parseTextSections(text: string): RequirementSection[] {
   if (Buffer.byteLength(text, 'utf8') > MAX_IMPORT_BYTES) {
-    throw new ImportError('input.too_large', 'Requirement text exceeds the 10 MB limit. Split it into smaller parts and import again.');
+    throw new ImportError('input.too_large', 'Requirement text exceeds the 10 MiB limit. Split it into smaller parts and import again.');
   }
 
   const sections: RequirementSection[] = [];
