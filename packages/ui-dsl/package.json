@@ -1,0 +1,21 @@
+{
+  "name": "@pulseflow/ui-dsl",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config ../../vitest.config.ts packages/ui-dsl/test",
+    "coverage": "vitest run --coverage --config ../../vitest.config.ts packages/ui-dsl/test"
+  },
+  "dependencies": {
+    "zod": "^4.1.11"
+  }
+}
