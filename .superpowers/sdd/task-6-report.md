@@ -48,3 +48,13 @@ The first review found three state recovery defects. Each behavior received a fa
 The DOCX test now checks the actual multipart `file` field using a synthetic File. Additional tests verify field validation diagnostics and preservation of edited DSL/fields when saving fails.
 
 Review verification: 10 Studio tests passed, typecheck/build/lint passed, coverage statements 91.74%, branches 84.65%, functions 96.22%, lines 96.58%. `git diff --check` passed. The source remains in memory only, and no credential or user document fixture was added.
+
+## Save race review fix
+
+A later review identified an async save race. Two new component scenarios were RED before implementation: editing fields/DSL/answers while the first POST was pending caused its late response to show the new version as saved; leaving and reentering the draft route during the pending request allowed a second POST with the same draft ID.
+
+The memory draft session now tracks a monotonic `revision`, `dirty`, `saved` (server existence), and `saving`. Confirmation captures the revision and copies the submitted answers. A successful response always records the server draft ID and existence for the same session, then marks the editor clean only if its revision still matches. Late responses cannot show success for newer edits. A pending save blocks a duplicate create, including after route reentry; the next save uses PUT. Save failure releases the pending state and displays an error only for the revision that failed.
+
+The two regression tests exercise a delayed synthetic API response. One edits fields, DSL and an answer before the response; the other leaves and reenters the route, verifies no duplicate POST, then verifies the subsequent PUT uses the same ID. Both reached GREEN.
+
+Final race-fix verification: 12 tests passed; coverage 91.28% statements, 84.91% branches, 96.61% functions, 97.01% lines. Studio typecheck, Vite build, lint, and diff check passed.

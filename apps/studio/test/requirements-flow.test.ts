@@ -4,7 +4,7 @@ import type { T2uiResult } from '@pulseflow/contracts';
 import App from '../src/App.vue';
 import { createStudioRouter } from '../src/router';
 import { clearToken } from '../src/features/auth/auth-store';
-import { clearDraft } from '../src/features/draft/draft-store';
+import { clearDraft, getDraftSession } from '../src/features/draft/draft-store';
 
 const testToken = ['local', 'secret'].join('-');
 const sections = [
@@ -36,12 +36,12 @@ async function login(wrapper: ReturnType<typeof mount>) {
 
 beforeEach(() => {
   clearToken(); clearDraft();
-  fetchMock = vi.fn().mockImplementation(async (input: string) => {
+  fetchMock = vi.fn().mockImplementation(async (input: string, init?: RequestInit) => {
     if (input.endsWith('/api/session/validate')) return response({ ok: true, data: { authenticated: true } });
     if (input.endsWith('/api/requirements/parse')) return response({ ok: true, data: { sections } });
     if (input.endsWith('/api/drafts/generate')) return response({ ok: true, data: result });
     if (input.startsWith('/api/drafts/')) return response({ ok: true, data: { id: input.split('/').pop(), pageId: 'order', ...result, status: 'draft' } });
-    if (input.endsWith('/api/drafts')) return response({ ok: true, data: { id: 'draft-order', pageId: 'order', ...result, status: 'draft' } }, 201);
+    if (input.endsWith('/api/drafts')) return response({ ok: true, data: JSON.parse(init?.body as string) }, 201);
     throw new Error(`Unexpected endpoint: ${input}`);
   });
   vi.stubGlobal('fetch', fetchMock);
@@ -176,6 +176,53 @@ describe('Studio workflow', () => {
     await wrapper.get('[data-testid="draft-dsl"]').setValue(JSON.stringify({ ...result.pageDsl, title: '二次编辑' }));
     await wrapper.get('[data-testid="confirm-draft"]').trigger('click'); await flushPromises();
     expect(fetchMock).toHaveBeenCalledWith(`/api/drafts/${savedId}`, expect.objectContaining({ method: 'PUT', body: expect.stringContaining('二次编辑') }));
+  });
+
+  it('does not mark later edits saved when an earlier save resolves', async () => {
+    const { wrapper } = await setup(); await login(wrapper);
+    await wrapper.get('[data-testid="requirement-text"]').setValue('订单字段');
+    await wrapper.get('[data-testid="parse-requirement"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="select-s1"]').setValue(true);
+    await wrapper.get('[data-testid="generate-draft"]').trigger('click'); await flushPromises();
+    let finishSave!: (value: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { finishSave = resolve; }));
+    await wrapper.get('[data-testid="confirm-draft"]').trigger('click');
+    const createCall = fetchMock.mock.calls.find(([path]) => path === '/api/drafts');
+    const sent = JSON.parse(createCall?.[1].body as string);
+    await wrapper.get('[data-testid="draft-fields"]').setValue(JSON.stringify([{ ...result.entityFields[0], label: '保存后编辑' }]));
+    await wrapper.get('[data-testid="draft-dsl"]').setValue(JSON.stringify({ ...result.pageDsl, title: '新标题' }));
+    await wrapper.get('[id="question-q1"]').setValue('是');
+    finishSave(response({ ok: true, data: sent }, 201)); await flushPromises();
+    expect(wrapper.text()).not.toContain('校验通过并已保存');
+    expect(getDraftSession()).toHaveProperty('dirty', true);
+    expect(getDraftSession()).toHaveProperty('id', sent.id);
+    await wrapper.get('[data-testid="confirm-draft"]').trigger('click'); await flushPromises();
+    expect(fetchMock).toHaveBeenCalledWith(`/api/drafts/${sent.id}`, expect.objectContaining({ method: 'PUT', body: expect.stringContaining('保存后编辑') }));
+  });
+
+  it('tracks an in-flight save across route reentry without losing dirty state or draft id', async () => {
+    const { wrapper, router } = await setup(); await login(wrapper);
+    await wrapper.get('[data-testid="requirement-text"]').setValue('订单字段');
+    await wrapper.get('[data-testid="parse-requirement"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="select-s1"]').setValue(true);
+    await wrapper.get('[data-testid="generate-draft"]').trigger('click'); await flushPromises();
+    let finishSave!: (value: Response) => void;
+    fetchMock.mockImplementationOnce(() => new Promise<Response>((resolve) => { finishSave = resolve; }));
+    await wrapper.get('[data-testid="confirm-draft"]').trigger('click');
+    const createCall = fetchMock.mock.calls.find(([path]) => path === '/api/drafts');
+    const sent = JSON.parse(createCall?.[1].body as string);
+    await wrapper.get('[data-testid="draft-fields"]').setValue(JSON.stringify([{ ...result.entityFields[0], label: '离开前编辑' }]));
+    await router.push('/requirements'); await flushPromises();
+    await router.push('/draft'); await flushPromises();
+    expect((wrapper.get('[data-testid="draft-fields"]').element as HTMLTextAreaElement).value).toContain('离开前编辑');
+    await wrapper.get('[data-testid="confirm-draft"]').trigger('click'); await flushPromises();
+    expect(fetchMock.mock.calls.filter(([path]) => path === '/api/drafts')).toHaveLength(1);
+    finishSave(response({ ok: true, data: sent }, 201)); await flushPromises();
+    expect(getDraftSession()).toHaveProperty('dirty', true);
+    expect(getDraftSession()).toHaveProperty('id', sent.id);
+    expect(wrapper.text()).not.toContain('校验通过并已保存');
+    await wrapper.get('[data-testid="confirm-draft"]').trigger('click'); await flushPromises();
+    expect(fetchMock).toHaveBeenCalledWith(`/api/drafts/${sent.id}`, expect.objectContaining({ method: 'PUT', body: expect.stringContaining('离开前编辑') }));
   });
 
   it('shows field validation diagnostics and preserves edited DSL after save failure', async () => {
