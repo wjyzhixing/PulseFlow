@@ -2,12 +2,18 @@ import { describe, expect, it } from 'vitest';
 import { validatePageDsl, type EntityField } from '../src/index.js';
 import { validFields, validPage } from './fixtures.js';
 
-const validate = (page: unknown) => validatePageDsl(page, validFields as unknown as EntityField[]);
+const validate = (page: unknown) => validatePageDsl(page, validFields);
 const node = (id: string, type: string, props: Record<string, unknown>) => ({ id, type, props, children: [], slots: [] });
 
 describe('validatePageDsl', () => {
   it('accepts the planned versioned page, whitelist and static slots', () => {
     expect(validate(validPage)).toMatchObject({ ok: true, dsl: validPage, diagnostics: [] });
+  });
+
+  it('validates structure without field context and checks references when an empty context is explicit', () => {
+    expect(validatePageDsl(validPage)).toMatchObject({ ok: true, dsl: validPage });
+    expect(validatePageDsl(validPage, []).diagnostics)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'field.unbound', path: 'nodes[1].props.columns[0].field' })]));
   });
 
   it('rejects an unsupported component with stable code and path', () => {
@@ -79,6 +85,72 @@ describe('validatePageDsl', () => {
     const item = node('x', 'FormItem', { fieldId: 'missing', label: 'Missing' });
     expect(validate({ ...validPage, nodes: [item] }).diagnostics)
       .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'field.unbound', path: 'nodes[0].props.fieldId' })]));
+  });
+
+  it('binds every Table column to an EntityField ID', () => {
+    const table = node('table', 'Table', { columns: [{ field: 'missing', title: 'Unknown' }], dataSourceKey: 'records' });
+    expect(validate({ ...validPage, nodes: [table] }).diagnostics)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'field.unbound', path: 'nodes[0].props.columns[0].field' })]));
+  });
+
+  it('requires a bodyCell field to appear in that Table columns', () => {
+    const table = { ...node('table', 'Table', { columns: [{ field: 'status-field', title: 'Status' }], dataSourceKey: 'records' }),
+      slots: [{ name: 'bodyCell', field: 'phone-field', cases: [{ equals: '13800138000', label: 'Phone', color: 'default' }] }] };
+    expect(validate({ ...validPage, nodes: [table] }).diagnostics)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'slot.field.not-column', path: 'nodes[0].slots[0].field' })]));
+  });
+
+  it('checks condition equality type and enum membership', () => {
+    const pageWith = (equals: unknown) => ({ ...validPage, nodes: [{ ...node('x', 'Tag', { text: 'A' }), condition: { fieldId: 'status-field', equals } }] });
+    expect(validate(pageWith(true)).diagnostics)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'condition.type', path: 'nodes[0].condition.equals' })]));
+    expect(validate(pageWith('inactive')).diagnostics)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'condition.enum', path: 'nodes[0].condition.equals' })]));
+  });
+
+  it('checks bodyCell equality type and enum membership', () => {
+    const pageWith = (equals: unknown) => ({ ...validPage, nodes: [{
+      ...node('table', 'Table', { columns: [{ field: 'status-field', title: 'Status' }], dataSourceKey: 'records' }),
+      slots: [{ name: 'bodyCell', field: 'status-field', cases: [{ equals, label: 'State', color: 'default' }] }]
+    }] });
+    expect(validate(pageWith(true)).diagnostics)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'slot.case.type', path: 'nodes[0].slots[0].cases[0].equals' })]));
+    expect(validate(pageWith('inactive')).diagnostics)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'slot.case.enum', path: 'nodes[0].slots[0].cases[0].equals' })]));
+  });
+
+  it('compares number and boolean equality against string encoded enum values after type checks', () => {
+    const fields: EntityField[] = [
+      { id: 'count-field', key: 'count', label: 'Count', type: 'number', rules: [{ kind: 'enum', values: ['2'] }] },
+      { id: 'active-field', key: 'active', label: 'Active', type: 'boolean', rules: [{ kind: 'enum', values: ['true'] }] }
+    ];
+    const numberNode = { ...node('n', 'Tag', { text: 'Count' }), condition: { fieldId: 'count-field', equals: 2 } };
+    const booleanNode = { ...node('b', 'Tag', { text: 'Active' }), condition: { fieldId: 'active-field', equals: true } };
+    expect(validatePageDsl({ ...validPage, nodes: [numberNode, booleanNode] }, fields).ok).toBe(true);
+    const badNumber = { ...numberNode, condition: { fieldId: 'count-field', equals: 3 } };
+    const badBoolean = { ...booleanNode, condition: { fieldId: 'active-field', equals: 'true' } };
+    expect(validatePageDsl({ ...validPage, nodes: [badNumber, badBoolean] }, fields).diagnostics)
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'condition.enum', path: 'nodes[0].condition.equals' }),
+        expect.objectContaining({ code: 'condition.type', path: 'nodes[1].condition.equals' })
+      ]));
+  });
+
+  it('applies number and boolean field rules to bodyCell cases', () => {
+    const fields: EntityField[] = [
+      { id: 'count-field', key: 'count', label: 'Count', type: 'number', rules: [{ kind: 'enum', values: ['2'] }] },
+      { id: 'active-field', key: 'active', label: 'Active', type: 'boolean', rules: [{ kind: 'enum', values: ['true'] }] }
+    ];
+    const table = (field: string, equals: unknown) => ({
+      ...node('table', 'Table', { columns: [{ field, title: 'Value' }], dataSourceKey: 'records' }),
+      slots: [{ name: 'bodyCell', field, cases: [{ equals, label: 'Value', color: 'default' }] }]
+    });
+    expect(validatePageDsl({ ...validPage, nodes: [table('count-field', 2)] }, fields).ok).toBe(true);
+    expect(validatePageDsl({ ...validPage, nodes: [table('active-field', true)] }, fields).ok).toBe(true);
+    expect(validatePageDsl({ ...validPage, nodes: [table('count-field', 3)] }, fields).diagnostics)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'slot.case.enum', path: 'nodes[0].slots[0].cases[0].equals' })]));
+    expect(validatePageDsl({ ...validPage, nodes: [table('active-field', 'true')] }, fields).diagnostics)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'slot.case.type', path: 'nodes[0].slots[0].cases[0].equals' })]));
   });
 
   it.each([

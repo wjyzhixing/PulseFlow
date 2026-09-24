@@ -12,12 +12,22 @@ function isRecord(value: unknown): value is RecordValue {
 
 interface NodeContext {
   ids: Set<string>;
-  fieldIds: Set<string>;
+  fields?: Map<string, EntityField>;
   diagnostics: Diagnostic[];
   seen: WeakSet<object>;
 }
 
-function validateSlot(slot: unknown, path: string, type: string, context: NodeContext, depth: number): void {
+function validateEquality(value: string | number | boolean, field: EntityField, path: string, code: string): Diagnostic[] {
+  if (typeof value !== field.type) {
+    return [diagnostic(`${code}.type`, path, `Equality value must be ${field.type}`)];
+  }
+  if (field.rules.some((rule) => rule.kind === 'enum' && !rule.values.includes(String(value)))) {
+    return [diagnostic(`${code}.enum`, path, 'Equality value is outside the field enum')];
+  }
+  return [];
+}
+
+function validateSlot(slot: unknown, path: string, type: string, context: NodeContext, depth: number, tableColumns?: Set<string>): void {
   if (!isRecord(slot) || typeof slot.name !== 'string') {
     context.diagnostics.push(diagnostic('slot.invalid', path, 'Slot must have a name'));
     return;
@@ -42,8 +52,19 @@ function validateSlot(slot: unknown, path: string, type: string, context: NodeCo
     if (!parsed.success) {
       context.diagnostics.push(...zodDiagnostics(parsed.error.issues, path, 'slot.invalid')
         .map((item) => ({ ...item, code: 'slot.invalid' })));
-    } else if (!context.fieldIds.has(parsed.data.field)) {
-      context.diagnostics.push(diagnostic('field.unbound', `${path}.field`, 'Unknown entity field'));
+    } else {
+      const field = context.fields?.get(parsed.data.field);
+      if (context.fields && !field) {
+        context.diagnostics.push(diagnostic('field.unbound', `${path}.field`, 'Unknown entity field'));
+      }
+      if (tableColumns && !tableColumns.has(parsed.data.field)) {
+        context.diagnostics.push(diagnostic('slot.field.not-column', `${path}.field`, 'Body cell field must be a Table column'));
+      }
+      if (field) {
+        parsed.data.cases.forEach((item, index) => {
+          context.diagnostics.push(...validateEquality(item.equals, field, `${path}.cases[${index}].equals`, 'slot.case'));
+        });
+      }
     }
     return;
   }
@@ -83,17 +104,37 @@ function validateNode(value: unknown, path: string, context: NodeContext, depth:
   const props = componentProps[type].safeParse(value.props);
   if (!props.success) {
     context.diagnostics.push(...zodDiagnostics(props.error.issues, `${path}.props`, 'component.prop.invalid'));
-  } else if (type === 'FormItem' && 'fieldId' in props.data &&
-    typeof props.data.fieldId === 'string' && !context.fieldIds.has(props.data.fieldId)) {
+  } else if (type === 'FormItem' && context.fields && 'fieldId' in props.data &&
+    typeof props.data.fieldId === 'string' && !context.fields.has(props.data.fieldId)) {
     context.diagnostics.push(diagnostic('field.unbound', `${path}.props.fieldId`, 'Unknown entity field'));
+  }
+
+  let tableColumns: Set<string> | undefined;
+  if (type === 'Table' && props.success) {
+    const tableProps = componentProps.Table.safeParse(value.props);
+    if (tableProps.success) {
+      tableColumns = new Set(tableProps.data.columns.map((column) => column.field));
+      if (context.fields) {
+        tableProps.data.columns.forEach((column, index) => {
+          if (!context.fields?.has(column.field)) {
+            context.diagnostics.push(diagnostic('field.unbound', `${path}.props.columns[${index}].field`, 'Unknown entity field'));
+          }
+        });
+      }
+    }
   }
 
   if (Object.hasOwn(value, 'condition')) {
     const condition = conditionSchema.safeParse(value.condition);
     if (!condition.success) {
       context.diagnostics.push(...zodDiagnostics(condition.error.issues, `${path}.condition`, 'condition.invalid'));
-    } else if (!context.fieldIds.has(condition.data.fieldId)) {
-      context.diagnostics.push(diagnostic('field.unbound', `${path}.condition.fieldId`, 'Unknown condition field'));
+    } else if (context.fields) {
+      const field = context.fields.get(condition.data.fieldId);
+      if (!field) {
+        context.diagnostics.push(diagnostic('field.unbound', `${path}.condition.fieldId`, 'Unknown condition field'));
+      } else {
+        context.diagnostics.push(...validateEquality(condition.data.equals, field, `${path}.condition.equals`, 'condition'));
+      }
     }
   }
 
@@ -107,7 +148,7 @@ function validateNode(value: unknown, path: string, context: NodeContext, depth:
         if (slotNames.has(slot.name)) context.diagnostics.push(diagnostic('slot.duplicate', `${slotPath}.name`, 'Duplicate slot'));
         slotNames.add(slot.name);
       }
-      validateSlot(slot, slotPath, type, context, depth);
+      validateSlot(slot, slotPath, type, context, depth, tableColumns);
     });
   }
 
@@ -120,17 +161,22 @@ function validateNode(value: unknown, path: string, context: NodeContext, depth:
   }
 }
 
-export function validatePageDsl(value: unknown, entityFields: readonly EntityField[] = []): ValidationResult {
+/**
+ * Validate the page shape and, when entityFields is provided, cross-check field references.
+ * Omitting the field context intentionally skips reference existence/type checks.
+ */
+export function validatePageDsl(value: unknown, entityFields?: readonly EntityField[]): ValidationResult {
   const page = pageDslSchema.safeParse(value);
   if (!page.success) return { ok: false, diagnostics: zodDiagnostics(page.error.issues, '', 'schema.invalid') };
 
-  const fields = z.array(entityFieldSchema).safeParse(entityFields);
-  if (!fields.success) return { ok: false, diagnostics: zodDiagnostics(fields.error.issues, 'entityFields', 'field.invalid') };
+  const fields = entityFields === undefined ? undefined : z.array(entityFieldSchema).safeParse(entityFields);
+  if (fields && !fields.success) return { ok: false, diagnostics: zodDiagnostics(fields.error.issues, 'entityFields', 'field.invalid') };
 
   const context: NodeContext = {
-    ids: new Set(), fieldIds: new Set(fields.data.map((field) => field.id)), diagnostics: [], seen: new WeakSet()
+    ids: new Set(), fields: fields?.success ? new Map(fields.data.map((field) => [field.id, field])) : undefined,
+    diagnostics: [], seen: new WeakSet()
   };
-  fields.data.forEach((field, index) => {
+  if (fields?.success) fields.data.forEach((field, index) => {
     if (fields.data.findIndex((item) => item.id === field.id) !== index) {
       context.diagnostics.push(diagnostic('field.id.duplicate', `entityFields[${index}].id`, 'Duplicate field ID'));
     }

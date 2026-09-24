@@ -16,8 +16,8 @@ describe('draft contracts', () => {
 
   it('uses the planned T2uiResult, Draft and ApiResult property names', () => {
     const result: T2uiResult = {
-      entityFields: validFields as unknown as T2uiResult['entityFields'],
-      pageDsl: validPage as T2uiResult['pageDsl'],
+      entityFields: validFields,
+      pageDsl: validPage,
       semanticQuestions: [{ id: 'q1', question: 'Who owns it?' }]
     };
     const draft: Draft = {
@@ -32,10 +32,10 @@ describe('draft contracts', () => {
   });
 
   it('keeps Draft.pageId consistent with PageDsl.pageId', () => {
-    const draft = {
+    const draft: Draft = {
       id: 'draft-1', pageId: validPage.pageId, pageDsl: validPage,
       entityFields: validFields, semanticQuestions: [], status: 'draft'
-    } as unknown as Draft;
+    };
     expect(createDraft(draft)).toEqual(draft);
     expect(() => createDraft({ ...draft, pageId: 'other' })).toThrow('Draft pageId must match pageDsl.pageId');
   });

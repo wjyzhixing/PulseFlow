@@ -1,9 +1,11 @@
-export const validFields = [
+import type { EntityField, PageDsl } from '../src/index.js';
+
+export const validFields: EntityField[] = [
   { id: 'status-field', key: 'status', label: 'Status', type: 'string', rules: [{ kind: 'enum', values: ['active', 'paused'] }] },
   { id: 'phone-field', key: 'phone', label: 'Phone', type: 'string', rules: [{ kind: 'required' }, { kind: 'format', format: 'phone' }] }
-] as const;
+];
 
-export const validPage = {
+export const validPage: PageDsl = {
   schemaVersion: 1,
   pageId: 'dedicated-line_1',
   title: 'Dedicated line',
