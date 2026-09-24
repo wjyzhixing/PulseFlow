@@ -118,6 +118,32 @@ function addDataDescriptor(buffer: Buffer, withSignature: boolean): Buffer {
   return result;
 }
 
+function replaceDocumentPart(target: Buffer, replacement: Buffer): Buffer {
+  const targetEntry = documentEntryOffsets(target);
+  const replacementEntry = documentEntryOffsets(replacement);
+  const targetDataStart = targetEntry.local + 30 + target.readUInt16LE(targetEntry.local + 26) + target.readUInt16LE(targetEntry.local + 28);
+  const replacementDataStart = replacementEntry.local + 30 + replacement.readUInt16LE(replacementEntry.local + 26) + replacement.readUInt16LE(replacementEntry.local + 28);
+  const targetCompressedSize = target.readUInt32LE(targetEntry.central + 20);
+  const replacementCompressedSize = replacement.readUInt32LE(replacementEntry.central + 20);
+  const targetUncompressedSize = target.readUInt32LE(targetEntry.central + 24);
+  const replacementUncompressedSize = replacement.readUInt32LE(replacementEntry.central + 24);
+  if (targetCompressedSize !== replacementCompressedSize || targetUncompressedSize !== replacementUncompressedSize) {
+    throw new Error('Synthetic replacement must preserve ZIP entry sizes');
+  }
+  const result = Buffer.from(target);
+  result.set(replacement.subarray(replacementDataStart, replacementDataStart + replacementCompressedSize), targetDataStart);
+  return result;
+}
+
+function makePolyglotDocx(): Buffer {
+  const outer = makeDocx('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>safe outer</w:t></w:r></w:p></w:body></w:document>');
+  const embedded = makeDocx('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>embedded archive</w:t></w:r></w:p></w:body></w:document>');
+  const comment = Buffer.concat([Buffer.from('outer ZIP comment'), embedded, Buffer.from('tail after embedded EOCD')]);
+  const outerEocd = eocdOffset(outer);
+  outer.writeUInt16LE(comment.byteLength, outerEocd + 20);
+  return Buffer.concat([outer, comment]);
+}
+
 function eocdOffset(buffer: Buffer): number {
   const signature = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
   const offset = buffer.lastIndexOf(signature);
@@ -314,13 +340,26 @@ describe('DOCX requirement import', () => {
     expect(() => preflightDocx(Buffer.alloc(64))).toThrowError(expect.objectContaining({ code: 'docx.invalid' }));
   });
 
-  it('finds the actual end-of-directory when a ZIP comment contains the signature', () => {
-    const original = makeDocx('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body/></w:document>');
-    const eocd = eocdOffset(original);
-    const comment = Buffer.alloc(32);
-    comment.writeUInt32LE(0x06054b50, 12);
-    original.writeUInt16LE(comment.byteLength, eocd + 20);
-    expect(() => preflightDocx(Buffer.concat([original, comment]))).not.toThrow();
+  it('rejects an embedded invalid EOCD instead of falling back to the outer archive', async () => {
+    const buffer = makePolyglotDocx();
+    expect(() => preflightDocx(buffer)).toThrowError(expect.objectContaining({ code: 'docx.invalid' }));
+    await expect(parseDocxSections(buffer)).rejects.toMatchObject({ code: 'docx.invalid' });
+  });
+
+  it('rejects same-length STORE payload bytes with a stale CRC', async () => {
+    const target = makeDocx('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>safe</w:t></w:r></w:p></w:body></w:document>', 0);
+    const replacement = makeDocx('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>evil</w:t></w:r></w:p></w:body></w:document>', 0);
+    const tampered = replaceDocumentPart(target, replacement);
+    expect(() => preflightDocx(tampered)).toThrowError(expect.objectContaining({ code: 'docx.invalid' }));
+    await expect(parseDocxSections(tampered)).rejects.toMatchObject({ code: 'docx.invalid' });
+  });
+
+  it('rejects same-length valid DEFLATE output with a stale CRC', async () => {
+    const target = makeDocx('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>safe</w:t></w:r></w:p></w:body></w:document>');
+    const replacement = makeDocx('<?xml version="1.0"?><w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"><w:body><w:p><w:r><w:t>evil</w:t></w:r></w:p></w:body></w:document>');
+    const tampered = replaceDocumentPart(target, replacement);
+    expect(() => preflightDocx(tampered)).toThrowError(expect.objectContaining({ code: 'docx.invalid' }));
+    await expect(parseDocxSections(tampered)).rejects.toMatchObject({ code: 'docx.invalid' });
   });
 
   it('rejects a malformed central-directory signature', () => {

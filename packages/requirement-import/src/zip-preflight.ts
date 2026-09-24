@@ -1,4 +1,4 @@
-import { inflateRawSync } from 'node:zlib';
+import { crc32, inflateRawSync } from 'node:zlib';
 import { ImportError } from './errors.js';
 
 export const MAX_DOCX_ENTRIES = 128;
@@ -6,12 +6,10 @@ export const MAX_DOCX_UNCOMPRESSED_BYTES = 32 * 1024 * 1024;
 export const MAX_DOCX_ENTRY_UNCOMPRESSED_BYTES = 16 * 1024 * 1024;
 export const MAX_DOCX_COMPRESSION_RATIO = 100;
 
-const EOCD_SIGNATURE = 0x06054b50;
 const CENTRAL_SIGNATURE = 0x02014b50;
 const LOCAL_SIGNATURE = 0x04034b50;
 const DATA_DESCRIPTOR_SIGNATURE = 0x08074b50;
 const ZIP64_EXTRA_ID = 0x0001;
-const MAX_ZIP_COMMENT_BYTES = 0xffff;
 
 interface ZipEntry {
   nameBytes: Buffer;
@@ -56,17 +54,8 @@ export function preflightDocx(buffer: Buffer): void {
 }
 
 function readCentralDirectory(buffer: Buffer): { entries: ZipEntry[]; offset: number } {
-  const minimumEocdOffset = Math.max(0, buffer.length - 22 - MAX_ZIP_COMMENT_BYTES);
-  let eocdOffset = -1;
-  for (let offset = buffer.length - 22; offset >= minimumEocdOffset; offset -= 1) {
-    if (
-      buffer.readUInt32LE(offset) === EOCD_SIGNATURE &&
-      offset + 22 + buffer.readUInt16LE(offset + 20) === buffer.length
-    ) {
-      eocdOffset = offset;
-      break;
-    }
-  }
+  const eocdSignature = Buffer.from([0x50, 0x4b, 0x05, 0x06]);
+  const eocdOffset = buffer.lastIndexOf(eocdSignature);
   if (eocdOffset < 0 || eocdOffset + 22 > buffer.length) throw invalidZipError();
 
   const diskNumber = buffer.readUInt16LE(eocdOffset + 4);
@@ -188,14 +177,14 @@ function rejectZip64Extra(extra: Buffer): void {
 
 function validateActualExpandedSize(compressed: Buffer, entry: ZipEntry): void {
   if (entry.method === 0) {
-    if (compressed.byteLength !== entry.uncompressedSize) throw invalidZipError();
+    if (compressed.byteLength !== entry.uncompressedSize || crc32(compressed) !== entry.crc32) throw invalidZipError();
     return;
   }
 
   try {
     const expanded = inflateRawSync(compressed, { maxOutputLength: MAX_DOCX_ENTRY_UNCOMPRESSED_BYTES + 1 });
     if (expanded.byteLength > MAX_DOCX_ENTRY_UNCOMPRESSED_BYTES) throw tooLargeError();
-    if (expanded.byteLength !== entry.uncompressedSize) throw invalidZipError();
+    if (expanded.byteLength !== entry.uncompressedSize || crc32(expanded) !== entry.crc32) throw invalidZipError();
   } catch (error) {
     if (error instanceof ImportError) throw error;
     if (error instanceof RangeError) throw tooLargeError();

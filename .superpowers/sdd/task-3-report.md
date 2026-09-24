@@ -24,12 +24,14 @@ Implemented `packages/requirement-import` for transient requirement text and DOC
 
 The independent review of the original Task 3 commit requested changes for decompression-bomb limits, table paragraph extraction, consistent MiB messages, and unheaded DOCX coverage. Added those tests first and ran the package suite RED: **5 failed / 9 passed** across the 14 tests. Failures showed omitted table text, missing compressed-input and HTML-output caps, and both old “10 MB” messages. Implemented the preflight and extraction changes, then expanded coverage with synthetic in-memory ZIP cases for understated size declarations, actual inflate limits, STORE/DEFLATE and data descriptors, multi-disk/ZIP64 and unsupported methods, entry/aggregate/ratio limits, malformed payloads, central/local-header disagreement, duplicate names, EOCD comments, and overlapping local ranges. The final package suite is **39/39 GREEN**. All large payloads are synthetic and generated in memory; no source requirement or uploaded DOCX is written to disk or logged.
 
+The follow-up security review found that EOCD scanning could fall back to an earlier valid record when the final signature in a ZIP comment was malformed, and that preflight trusted declared CRCs without comparing them to payload bytes. Added three regression tests first; the package suite went RED with **3 failed / 38 passed**. The final preflight now uses only the last EOCD signature and requires a complete EOCD ending at EOF, validates CRC32 for STORE bytes and actual DEFLATE output, and rejects the embedded-EOCD polyglot plus same-length STORE/DEFLATE payload substitutions carrying stale CRCs. Current package suite: **41/41 GREEN**. CRC validation uses `node:zlib`'s `crc32`; the project plan targets Node.js 22, and the verified runtime is Node v22.22.2 where this API is available.
+
 ## Validation
 
-- `pnpm --filter @pulseflow/requirement-import test`: **39/39 passed** after review remediation.
+- `pnpm --filter @pulseflow/requirement-import test`: **41/41 passed** after the security follow-up.
 - Package typecheck and build: passed.
-- Root `pnpm verify`: passed after review remediation for workspace typechecks, tests, coverage, and builds. Requirement-import coverage after remediation: statements **96.98%**, branches **92.91%**, functions **100%**, lines **100%**.
-- `pnpm lint`: passed.
+- Root `pnpm verify`: passed after the security follow-up for workspace typechecks, tests, coverage, and builds. Requirement-import coverage: statements **97.91%**, branches **94.48%**, functions **100%**, lines **100%**.
+- `pnpm lint`: passed after removing obsolete EOCD scan constants.
 - `pnpm audit`: passed, no known vulnerabilities.
 - `git diff --check`: passed before staging; staged diff check is run before commit.
 
