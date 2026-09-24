@@ -1,0 +1,25 @@
+{
+  "name": "@pulseflow/requirement-import",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config ../../vitest.config.ts packages/requirement-import/test",
+    "coverage": "vitest run --coverage --config ../../vitest.config.ts packages/requirement-import/test"
+  },
+  "dependencies": {
+    "cheerio": "^1.1.2",
+    "mammoth": "^1.10.0"
+  },
+  "devDependencies": {
+    "fflate": "^0.8.2"
+  }
+}
