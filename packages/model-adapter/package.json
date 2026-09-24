@@ -1,0 +1,23 @@
+{
+  "name": "@pulseflow/model-adapter",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config ../../vitest.config.ts packages/model-adapter/test",
+    "coverage": "vitest run --coverage --config ../../vitest.config.ts packages/model-adapter/test"
+  },
+  "dependencies": {
+    "@pulseflow/ui-dsl": "workspace:*",
+    "@pulseflow/requirement-import": "workspace:*",
+    "zod": "^4.1.11"
+  }
+}

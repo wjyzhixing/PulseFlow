@@ -46,6 +46,18 @@ importers:
         specifier: workspace:*
         version: link:../ui-dsl
 
+  packages/model-adapter:
+    dependencies:
+      '@pulseflow/requirement-import':
+        specifier: workspace:*
+        version: link:../requirement-import
+      '@pulseflow/ui-dsl':
+        specifier: workspace:*
+        version: link:../ui-dsl
+      zod:
+        specifier: ^4.1.11
+        version: 4.6.5
+
   packages/requirement-import:
     dependencies:
       cheerio:

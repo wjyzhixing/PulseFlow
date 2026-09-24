@@ -4,7 +4,8 @@ import { defineConfig } from 'vitest/config';
 const packageName = process.env.npm_package_name;
 const coverageTarget = packageName === '@pulseflow/ui-dsl' ? 'packages/ui-dsl'
   : packageName === '@pulseflow/contracts' ? 'packages/contracts'
-    : packageName === '@pulseflow/requirement-import' ? 'packages/requirement-import' : 'apps/api';
+    : packageName === '@pulseflow/requirement-import' ? 'packages/requirement-import'
+      : packageName === '@pulseflow/model-adapter' ? 'packages/model-adapter' : 'apps/api';
 
 export default defineConfig({
   root: fileURLToPath(new URL('.', import.meta.url)),
