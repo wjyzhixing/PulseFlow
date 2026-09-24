@@ -22,7 +22,9 @@ async function parse() {
   if (!file.value && !text.value.trim()) { error.value = '请输入需求文本或上传 DOCX'; return; }
   busy.value = true; error.value = '';
   try {
-    sections.value = await parseRequirement(file.value ?? text.value);
+    const parsed = await parseRequirement(file.value ?? text.value);
+    if (!parsed.length) { error.value = '未找到可用章节，请检查原稿或补充内容后重试'; return; }
+    sections.value = parsed;
     selectedIds.value = [];
     text.value = ''; file.value = null; source.value?.resetFile();
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '解析失败，请重试'; }

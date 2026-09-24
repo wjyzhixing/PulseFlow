@@ -40,6 +40,7 @@ beforeEach(() => {
     if (input.endsWith('/api/session/validate')) return response({ ok: true, data: { authenticated: true } });
     if (input.endsWith('/api/requirements/parse')) return response({ ok: true, data: { sections } });
     if (input.endsWith('/api/drafts/generate')) return response({ ok: true, data: result });
+    if (input.startsWith('/api/drafts/')) return response({ ok: true, data: { id: input.split('/').pop(), pageId: 'order', ...result, status: 'draft' } });
     if (input.endsWith('/api/drafts')) return response({ ok: true, data: { id: 'draft-order', pageId: 'order', ...result, status: 'draft' } }, 201);
     throw new Error(`Unexpected endpoint: ${input}`);
   });
@@ -84,12 +85,34 @@ describe('Studio workflow', () => {
     await flushPromises();
     expect(wrapper.text()).toContain('订单字段');
     expect(fetchMock).toHaveBeenCalledWith('/api/requirements/parse', expect.objectContaining({ body: expect.any(FormData), headers: expect.objectContaining({ Authorization: `Bearer ${testToken}` }) }));
+    const upload = fetchMock.mock.calls.find(([path]) => path === '/api/requirements/parse')?.[1].body as FormData;
+    expect((upload.get('file') as File).name).toBe('proposal.docx');
     Object.defineProperty(input, 'files', { configurable: true, value: [new File(['x'], 'bad.txt', { type: 'text/plain' })] });
     await wrapper.get('[data-testid="requirement-file"]').trigger('change');
     expect(wrapper.text()).toContain('DOCX');
     Object.defineProperty(input, 'files', { configurable: true, value: [{ name: 'big.docx', size: 10 * 1024 * 1024 + 1, type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }] });
     await wrapper.get('[data-testid="requirement-file"]').trigger('change');
     expect(wrapper.text()).toContain('10 MB');
+  });
+
+  it('retains text and shows guidance when parsing returns no sections', async () => {
+    const { wrapper } = await setup(); await login(wrapper);
+    fetchMock.mockImplementationOnce(async () => response({ ok: true, data: { sections: [] } }));
+    await wrapper.get('[data-testid="requirement-text"]').setValue('无标题原稿');
+    await wrapper.get('[data-testid="parse-requirement"]').trigger('click'); await flushPromises();
+    expect((wrapper.get('[data-testid="requirement-text"]').element as HTMLTextAreaElement).value).toBe('无标题原稿');
+    expect(wrapper.text()).toContain('未找到可用章节');
+  });
+
+  it('retains the selected DOCX when parsing returns no sections', async () => {
+    const { wrapper } = await setup(); await login(wrapper);
+    fetchMock.mockImplementationOnce(async () => response({ ok: true, data: { sections: [] } }));
+    const input = wrapper.get('[data-testid="requirement-file"]');
+    Object.defineProperty(input.element, 'files', { configurable: true, value: [new File(['empty'], 'empty.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })] });
+    await input.trigger('change');
+    await wrapper.get('[data-testid="parse-requirement"]').trigger('click'); await flushPromises();
+    expect(wrapper.text()).toContain('empty.docx');
+    expect(wrapper.text()).toContain('未找到可用章节');
   });
 
   it('supports titleless manual sections and preserves input on parsing and model errors', async () => {
@@ -111,6 +134,67 @@ describe('Studio workflow', () => {
     expect(wrapper.text()).toContain('生成超时');
     expect(wrapper.get('[data-testid="select-s2"]').element).toHaveProperty('checked', true);
     expect(wrapper.text()).toContain('补充约束');
+  });
+
+  it('clears saved validation feedback after fields, DSL or answers change', async () => {
+    const { wrapper } = await setup(); await login(wrapper);
+    await wrapper.get('[data-testid="requirement-text"]').setValue('订单字段');
+    await wrapper.get('[data-testid="parse-requirement"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="select-s1"]').setValue(true);
+    await wrapper.get('[data-testid="generate-draft"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="confirm-draft"]').trigger('click'); await flushPromises();
+    expect(wrapper.text()).toContain('校验通过');
+    await wrapper.get('[data-testid="draft-fields"]').setValue(JSON.stringify([{ ...result.entityFields[0], label: '新字段' }]));
+    expect(wrapper.text()).not.toContain('校验通过');
+    await wrapper.get('[data-testid="confirm-draft"]').trigger('click'); await flushPromises();
+    expect(wrapper.text()).toContain('校验通过');
+    await wrapper.get('[data-testid="draft-dsl"]').setValue(JSON.stringify({ ...result.pageDsl, title: '新页面' }));
+    expect(wrapper.text()).not.toContain('校验通过');
+    await wrapper.get('[data-testid="confirm-draft"]').trigger('click'); await flushPromises();
+    expect(wrapper.text()).toContain('校验通过');
+    await wrapper.get('[id="question-q1"]').setValue('是');
+    expect(wrapper.text()).not.toContain('校验通过');
+  });
+
+  it('restores edited draft content and updates the same draft after route reentry', async () => {
+    const { wrapper, router } = await setup(); await login(wrapper);
+    await wrapper.get('[data-testid="requirement-text"]').setValue('订单字段');
+    await wrapper.get('[data-testid="parse-requirement"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="select-s1"]').setValue(true);
+    await wrapper.get('[data-testid="generate-draft"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="draft-fields"]').setValue(JSON.stringify([{ ...result.entityFields[0], label: '客户名称' }]));
+    await wrapper.get('[data-testid="draft-dsl"]').setValue(JSON.stringify({ ...result.pageDsl, title: '订单台账' }));
+    await wrapper.get('[id="question-q1"]').setValue('是');
+    await wrapper.get('[data-testid="confirm-draft"]').trigger('click'); await flushPromises();
+    const createCall = fetchMock.mock.calls.find(([path]) => path === '/api/drafts');
+    const savedId = JSON.parse(createCall?.[1].body as string).id as string;
+    await router.push('/requirements'); await flushPromises();
+    await router.push('/draft'); await flushPromises();
+    expect((wrapper.get('[data-testid="draft-fields"]').element as HTMLTextAreaElement).value).toContain('客户名称');
+    expect((wrapper.get('[data-testid="draft-dsl"]').element as HTMLTextAreaElement).value).toContain('订单台账');
+    expect((wrapper.get('[id="question-q1"]').element as HTMLInputElement).value).toBe('是');
+    await wrapper.get('[data-testid="draft-dsl"]').setValue(JSON.stringify({ ...result.pageDsl, title: '二次编辑' }));
+    await wrapper.get('[data-testid="confirm-draft"]').trigger('click'); await flushPromises();
+    expect(fetchMock).toHaveBeenCalledWith(`/api/drafts/${savedId}`, expect.objectContaining({ method: 'PUT', body: expect.stringContaining('二次编辑') }));
+  });
+
+  it('shows field validation diagnostics and preserves edited DSL after save failure', async () => {
+    const { wrapper } = await setup(); await login(wrapper);
+    await wrapper.get('[data-testid="requirement-text"]').setValue('订单字段');
+    await wrapper.get('[data-testid="parse-requirement"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="select-s1"]').setValue(true);
+    await wrapper.get('[data-testid="generate-draft"]').trigger('click'); await flushPromises();
+    await wrapper.get('[data-testid="draft-fields"]').setValue(JSON.stringify([{ id: 'company' }]));
+    await wrapper.get('[data-testid="confirm-draft"]').trigger('click');
+    expect(wrapper.text()).toContain('entityFields');
+    await wrapper.get('[data-testid="draft-fields"]').setValue(JSON.stringify(result.entityFields));
+    const editedDsl = JSON.stringify({ ...result.pageDsl, title: '保留草稿' });
+    await wrapper.get('[data-testid="draft-dsl"]').setValue(editedDsl);
+    fetchMock.mockImplementationOnce(async () => response({ ok: false, error: { code: 'server.error', message: '保存失败' } }, 503));
+    await wrapper.get('[data-testid="confirm-draft"]').trigger('click'); await flushPromises();
+    expect(wrapper.text()).toContain('保存失败');
+    expect((wrapper.get('[data-testid="draft-dsl"]').element as HTMLTextAreaElement).value).toBe(editedDsl);
+    expect((wrapper.get('[data-testid="draft-fields"]').element as HTMLTextAreaElement).value).toContain('企业名称');
   });
 
   it('confirms entities and DSL with validation feedback while allowing unresolved questions in draft', async () => {

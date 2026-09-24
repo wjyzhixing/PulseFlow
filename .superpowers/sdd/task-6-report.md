@@ -36,3 +36,15 @@ Successful parsing clears the original text and file control while retaining sec
 ## Risk
 
 The draft review editor is JSON-based; it gives precise schema diagnostics but expects users to edit structured data directly. The published interface flow is outside this task. Browser level visual checks and API integration against a running model service were not performed; component tests mock the API envelope.
+
+## Review fixes
+
+The first review found three state recovery defects. Each behavior received a failing component test before the fix:
+
+1. A successful parse with an empty `sections` array cleared the source and left no section editor. Text and DOCX cases both failed first. The intake now keeps the original source and shows a specific retry message when there are no usable sections.
+2. Editing fields, DSL, or answers after a successful save left the old success message visible. A regression test failed on the first field edit. Every edit now clears validation and saved feedback; the test separately verifies all three inputs.
+3. Returning to the draft route restored the model's original data and generated another ID. A route reentry test failed on the edited field. A memory draft session now owns edited fields, DSL, answers, ID, and server creation state. Reentry restores edits and the next save uses `PUT /api/drafts/:id`.
+
+The DOCX test now checks the actual multipart `file` field using a synthetic File. Additional tests verify field validation diagnostics and preservation of edited DSL/fields when saving fails.
+
+Review verification: 10 Studio tests passed, typecheck/build/lint passed, coverage statements 91.74%, branches 84.65%, functions 96.22%, lines 96.58%. `git diff --check` passed. The source remains in memory only, and no credential or user document fixture was added.
