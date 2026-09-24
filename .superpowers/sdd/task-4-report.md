@@ -31,3 +31,21 @@
 - Reviewed the request and error paths for credential leakage. The Authorization header is used only for the outbound request; no request logging was added. Malformed completion content and HTTP response bodies are not reflected into errors.
 - Endpoint validation accepts HTTP or HTTPS URLs without embedded credentials, query, or fragment. The adapter does not provide a public model default.
 - The initial RED run proved missing modules rather than individual assertion failures; this limits the strength of the test first evidence for those original cases.
+
+## Review fix: unresolved semantic questions
+
+- Review found that the original schema allowed the model to supply `semanticQuestions[].answer`. A nonempty answer could make `getUnresolvedQuestions` treat the question as resolved and bypass the human confirmation gate.
+- Added an assertion that an answered model question fails with `invalid_schema`. RED against the committed adapter: the promise resolved with `answer: 'USD'` instead of rejecting. This behavior level RED/GREEN closes the original module loading RED gap for the security relevant path.
+- Removed `answer` from the strict model response question schema. Any model supplied answer is now rejected; human answers may still be added later to the shared `SemanticQuestion` type.
+- Added an assertion that a DSL field reference absent from `entityFields` is rejected. Strengthened the prompt test to assert the serialized request contains exactly the selected section list; `T2uiInput` has no separate unselected section input.
+
+### Review fix verification
+
+| Command | Result |
+| --- | --- |
+| `pnpm --filter @pulseflow/model-adapter test -- -t "rejects model supplied answers"` before fix | Failed as expected: promise resolved with model supplied answer |
+| `pnpm --filter @pulseflow/model-adapter test` after fix | 18 tests passed |
+| `pnpm --filter @pulseflow/model-adapter typecheck` | Passed |
+| `pnpm --filter @pulseflow/model-adapter build` | Passed |
+| `pnpm exec eslint packages/model-adapter` | Passed |
+| `pnpm --filter @pulseflow/model-adapter coverage` | Passed: 18 tests; statements 90.62%, branches 85.71%, functions 100%, lines 96.22% |

@@ -54,8 +54,20 @@ describe('generateDraft', () => {
     await expect(generateDraft(input, { ...baseConfig, fetchImpl: async () => completion(JSON.stringify(malformed)) })).rejects.toMatchObject({ code: 'invalid_schema' });
   });
 
+  it('rejects model supplied answers to unresolved semantic questions', async () => {
+    const answered = { ...draft, semanticQuestions: [{ ...draft.semanticQuestions[0], answer: 'USD' }] };
+    await expect(generateDraft(input, { ...baseConfig, fetchImpl: async () => completion(JSON.stringify(answered)) })).rejects.toMatchObject({ code: 'invalid_schema' });
+  });
+
   it('rejects unsupported components in otherwise shaped DSL', async () => {
     const malformed = { ...draft, pageDsl: { ...draft.pageDsl, nodes: [{ ...draft.pageDsl.nodes[0], type: 'Script' }] } };
+    await expect(generateDraft(input, { ...baseConfig, fetchImpl: async () => completion(JSON.stringify(malformed)) })).rejects.toMatchObject({ code: 'invalid_schema' });
+  });
+
+  it('rejects DSL references to fields absent from the entity draft', async () => {
+    const malformed = { ...draft, pageDsl: { ...draft.pageDsl, nodes: [
+      { id: 'item', type: 'FormItem', props: { fieldId: 'missing' }, children: [], slots: [] }
+    ] } };
     await expect(generateDraft(input, { ...baseConfig, fetchImpl: async () => completion(JSON.stringify(malformed)) })).rejects.toMatchObject({ code: 'invalid_schema' });
   });
 

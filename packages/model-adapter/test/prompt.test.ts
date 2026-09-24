@@ -6,6 +6,7 @@ describe('buildPrompt', () => {
     const prompt = buildPrompt({ sections: [{ id: 's1', heading: 'Account', text: 'Show account balance' }] });
     expect(prompt.user).toContain('Show account balance');
     expect(prompt.user).toContain('Account');
+    expect(JSON.parse(prompt.user)).toEqual({ selectedSections: [{ id: 's1', heading: 'Account', text: 'Show account balance' }] });
     for (const component of ['Card', 'PageHeader', 'Form', 'FormItem', 'Input', 'Select', 'Button', 'Table', 'Row', 'Col', 'Tag', 'Badge']) {
       expect(prompt.system).toContain(component);
     }

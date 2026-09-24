@@ -28,7 +28,7 @@ const resultSchema = z.strictObject({
     schemaVersion: z.literal(1), pageId: identifier, title: z.string().min(1), nodes: z.array(z.unknown())
   }),
   semanticQuestions: z.array(z.strictObject({
-    id: identifier, question: z.string().min(1), answer: z.string().optional()
+    id: identifier, question: z.string().min(1)
   }))
 });
 const completionSchema = z.object({ choices: z.array(z.object({ message: z.object({ content: z.string() }) })).min(1) });
