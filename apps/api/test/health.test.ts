@@ -12,4 +12,16 @@ describe('GET /health', () => {
       await app.close();
     }
   });
+
+  it('rate limits requests after the configured maximum', async () => {
+    const app = buildApp({ rateLimit: { max: 1, timeWindow: '1 minute' } });
+    try {
+      const first = await app.inject({ method: 'GET', url: '/health' });
+      const second = await app.inject({ method: 'GET', url: '/health' });
+      expect(first.statusCode).toBe(200);
+      expect(second.statusCode).toBe(429);
+    } finally {
+      await app.close();
+    }
+  });
 });

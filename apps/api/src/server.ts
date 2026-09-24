@@ -1,7 +1,8 @@
 import { buildApp } from './app.js';
+import { parsePort } from './port.js';
 
+const port = parsePort(process.env.PORT);
 const app = buildApp();
-const port = Number(process.env.PORT ?? 3000);
 
 app.listen({ port, host: '0.0.0.0' }).catch((error: unknown) => {
   app.log.error(error);
