@@ -16,6 +16,8 @@
     "@pulseflow/requirement-import": "workspace:*",
     "@pulseflow/ui-dsl": "workspace:*",
     "ant-design-vue": "^4.2.6",
+    "jsonc-parser": "^3.3.1",
+    "monaco-editor": "^0.52.2",
     "vue": "^3.5.18",
     "vue-router": "^4.5.1"
   },

@@ -11,7 +11,8 @@ export function createStudioRouter() {
       { path: '/', redirect: '/requirements' },
       { path: '/login', component: LoginView },
       { path: '/requirements', component: RequirementIntakeView, meta: { auth: true } },
-      { path: '/draft', component: DraftReviewView, meta: { auth: true } }
+      { path: '/draft', component: DraftReviewView, meta: { auth: true } },
+      { path: '/design', component: () => import('./features/design/DesignStudioView.vue'), meta: { auth: true } }
     ]
   });
   router.beforeEach((to) => {
