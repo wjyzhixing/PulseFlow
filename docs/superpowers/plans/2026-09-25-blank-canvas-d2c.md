@@ -32,13 +32,13 @@
 - Add `setBlankDraft(title?: string): DraftSession` which creates a safe generated `pageId`, `PageDsl` with `schemaVersion: 1`, no nodes, empty entity fields, and no semantic questions.
 - Blank and T2UI drafts use the same `DraftSession` and route to `/design`.
 
-- [ ] Write a failing test asserting a blank draft has no nodes/fields/questions, a valid unique `pageId`, and is dirty/unsaved.
-- [ ] Run the focused Studio test and verify it fails because the factory is missing.
-- [ ] Implement `setBlankDraft` using a fresh object and safe ID generation.
-- [ ] Write a failing Studio flow test for clicking “从空白画布开始” and reaching an empty design canvas without calling the T2UI endpoint.
-- [ ] Run the focused flow test and verify the missing entry behavior.
-- [ ] Add the entry button and navigate after initializing the blank draft.
-- [ ] Run the draft-store and requirements-flow tests.
+- [x] Write a failing test asserting a blank draft has no nodes/fields/questions, a valid unique `pageId`, and is dirty/unsaved.
+- [x] Run the focused Studio test and verify it fails because the factory is missing.
+- [x] Implement `setBlankDraft` using a fresh object and safe ID generation.
+- [x] Write a failing Studio flow test for clicking “从空白画布开始” and reaching an empty design canvas without calling the T2UI endpoint.
+- [x] Run the focused flow test on the pre-feature commit and verify the entry button is absent.
+- [x] Add the entry button and navigate after initializing the blank draft.
+- [x] Run the draft-store and requirements-flow tests.
 
 ## Task 2: Maintain entity fields in the design studio
 

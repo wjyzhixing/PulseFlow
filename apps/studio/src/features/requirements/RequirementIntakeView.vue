@@ -6,7 +6,7 @@ import RequirementSource from './RequirementSource.vue';
 import SectionSelection from './SectionSelection.vue';
 import { parseRequirement } from './requirement-api';
 import { generateDraft } from '../draft/draft-api';
-import { setDraft } from '../draft/draft-store';
+import { setBlankDraft, setDraft } from '../draft/draft-store';
 const router = useRouter();
 const text = shallowRef(''); const file = shallowRef<File | null>(null); const error = shallowRef(''); const busy = shallowRef(false);
 const sections = shallowRef<RequirementSection[]>([]); const selectedIds = shallowRef<string[]>([]);
@@ -42,5 +42,9 @@ async function generate() {
   catch (cause) { error.value = cause instanceof Error ? cause.message : '生成失败，请重试'; }
   finally { busy.value = false; }
 }
+async function startBlankDraft() {
+  setBlankDraft();
+  await router.push('/design');
+}
 </script>
-<template><div class="panel"><div class="eyebrow">INGEST / REQUIREMENT SOURCE</div><h2 class="page-title">导入业务需求</h2><p class="lede">解析原始材料，核对章节范围，再生成可编辑的实体与界面定义。</p><RequirementSource ref="source" :text="text" :file-name="file?.name || ''" :busy="busy" :error="error" @update:text="text = $event" @file="onFile" @parse="parse"/><SectionSelection v-if="sections.length" :sections="sections" :selected-ids="selectedIds" :busy="busy" @toggle="toggle" @generate="generate" @add-manual="addManual"/></div></template>
+<template><div class="panel"><div class="eyebrow">INGEST / REQUIREMENT SOURCE</div><h2 class="page-title">导入业务需求</h2><p class="lede">解析原始材料，核对章节范围，再生成可编辑的实体与界面定义。</p><button class="btn" type="button" data-testid="start-blank-draft" :disabled="busy" @click="startBlankDraft">从空白画布开始 →</button><RequirementSource ref="source" :text="text" :file-name="file?.name || ''" :busy="busy" :error="error" @update:text="text = $event" @file="onFile" @parse="parse"/><SectionSelection v-if="sections.length" :sections="sections" :selected-ids="selectedIds" :busy="busy" @toggle="toggle" @generate="generate" @add-manual="addManual"/></div></template>

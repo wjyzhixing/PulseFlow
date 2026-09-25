@@ -6,6 +6,8 @@ import { createStudioRouter } from '../src/router';
 import { clearToken } from '../src/features/auth/auth-store';
 import { clearDraft, getDraftSession } from '../src/features/draft/draft-store';
 
+vi.mock('../src/features/design/DslMonacoEditor.vue', () => ({ default: { template: '<div data-testid="dsl-monaco-stub" />' } }));
+
 const testToken = ['local', 'secret'].join('-');
 const sections = [
   { id: 's1', heading: '订单字段', text: '企业名称' },
@@ -49,6 +51,24 @@ beforeEach(() => {
 afterEach(() => { vi.unstubAllGlobals(); });
 
 describe('Studio workflow', () => {
+  it('starts an empty design canvas without generating from requirements', async () => {
+    const { wrapper, router } = await setup();
+    await login(wrapper);
+
+    await wrapper.get('[data-testid="start-blank-draft"]').trigger('click');
+    expect(getDraftSession()).toMatchObject({ fieldsText: '[]', questions: [], dirty: true, saved: false });
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/design'));
+    await flushPromises();
+
+    expect(router.currentRoute.value.path).toBe('/design');
+    expect(wrapper.get('.design-canvas').text()).toContain('空白画布');
+    expect(wrapper.findAll('.canvas-node')).toHaveLength(0);
+    expect(JSON.parse(getDraftSession()!.fieldsText)).toEqual([]);
+    expect(JSON.parse(getDraftSession()!.dslText).nodes).toEqual([]);
+    expect(getDraftSession()?.questions).toEqual([]);
+    expect(fetchMock.mock.calls.some(([path]) => path === '/api/drafts/generate')).toBe(false);
+  });
+
   it('guards routes and keeps the validated token only in memory', async () => {
     const { wrapper, router } = await setup();
     expect(router.currentRoute.value.path).toBe('/login');

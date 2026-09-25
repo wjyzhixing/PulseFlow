@@ -1,5 +1,5 @@
 import type { T2uiResult } from '@pulseflow/contracts';
-import type { SemanticQuestion } from '@pulseflow/ui-dsl';
+import type { PageDsl, SemanticQuestion } from '@pulseflow/ui-dsl';
 import { shallowRef } from 'vue';
 
 export interface DraftSession {
@@ -27,6 +27,26 @@ export function setDraft(value: T2uiResult): void {
     saved: false,
     saving: false
   };
+}
+export function setBlankDraft(title?: string): DraftSession {
+  const pageDsl: PageDsl = {
+    schemaVersion: 1,
+    pageId: `page-${crypto.randomUUID()}`,
+    title: title?.trim() || '未命名页面',
+    nodes: []
+  };
+  const session: DraftSession = {
+    id: `draft-${crypto.randomUUID()}`,
+    fieldsText: '[]',
+    dslText: JSON.stringify(pageDsl, null, 2),
+    questions: [],
+    revision: 0,
+    dirty: true,
+    saved: false,
+    saving: false
+  };
+  draft.value = session;
+  return { ...session, questions: session.questions.map((question) => ({ ...question })) };
 }
 export function editDraftSession(changes: Partial<DraftEdits>): void {
   if (draft.value) draft.value = { ...draft.value, ...changes, revision: draft.value.revision + 1, dirty: true };
