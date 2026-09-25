@@ -118,7 +118,7 @@ const dropIndex = computed(() => props.node.type === 'PageHeader'
 .node-actions button{width:28px;height:28px;border:var(--pf-border-width) solid var(--pf-color-border);background:var(--pf-color-surface);color:var(--pf-color-text-secondary);border-radius:var(--pf-radius-sm);cursor:pointer}
 .node-actions button:hover:not(:disabled){border-color:var(--pf-color-primary);color:var(--pf-color-primary)}
 .node-actions button:focus-visible{outline:2px solid var(--pf-color-primary);outline-offset:1px}
-.node-actions button:disabled{opacity:.4;cursor:not-allowed}.node-actions .remove:hover{border-color:var(--pf-color-error);color:var(--pf-color-error)}
+.node-actions button:disabled{opacity:.4;cursor:not-allowed}.node-actions .remove:hover{border-color:var(--pf-color-error);color:var(--pf-color-error-text)}
 .node-children{min-width:0;padding:0 var(--pf-space-2) var(--pf-space-2) var(--pf-space-2);border-top:var(--pf-border-width) solid var(--pf-color-border-secondary)}
 .slot-children{padding-top:var(--pf-space-2)}.slot-label{display:block;margin:0 0 var(--pf-space-1) var(--pf-space-2);color:var(--pf-color-text-secondary);font-size:var(--pf-font-size-sm)}
 .drop-target{margin:var(--pf-space-2);padding:var(--pf-space-2);border:var(--pf-border-width) dashed var(--pf-color-border);border-radius:var(--pf-radius-sm);color:var(--pf-color-text-secondary);text-align:center;font-size:var(--pf-font-size-sm)}

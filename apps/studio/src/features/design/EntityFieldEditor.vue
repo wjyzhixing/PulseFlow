@@ -74,8 +74,8 @@ function updateFormat(field: DesignEntityField, event: Event): void {
 .field-control input:focus,.field-control select:focus{outline:2px solid #e6f4ff;border-color:var(--pf-color-primary)}
 .field-control__pair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:var(--pf-space-2)}
 .required-control{display:flex;align-items:center;gap:var(--pf-space-2);margin:var(--pf-space-3) 0}.required-control input{accent-color:var(--pf-color-primary)}.required-control span{margin:0}
-.remove-field{color:var(--pf-color-error);border-color:var(--pf-color-border)}.remove-field:hover{border-color:var(--pf-color-error);background:#fff2f0}
+.remove-field{color:var(--pf-color-error-text);border-color:var(--pf-color-border)}.remove-field:hover{border-color:var(--pf-color-error);background:#fff2f0}
 .empty-copy{color:var(--pf-color-text-secondary);font-size:var(--pf-font-size-sm);line-height:var(--pf-line-height)}
-.field-feedback{padding:var(--pf-space-2);margin:var(--pf-space-2) 0 0;background:#f6ffed;border:var(--pf-border-width) solid #b7eb8f;border-radius:var(--pf-radius-sm);font-size:var(--pf-font-size-sm)}.field-feedback.failed{background:#fff2f0;border-color:#ffccc7}
+.field-feedback{padding:var(--pf-space-2);margin:var(--pf-space-2) 0 0;background:#f6ffed;border:var(--pf-border-width) solid #b7eb8f;border-radius:var(--pf-radius-sm);color:var(--pf-color-success-text);font-size:var(--pf-font-size-sm)}.field-feedback.failed{background:#fff2f0;border-color:#ffccc7;color:var(--pf-color-error-text)}
 @media(max-width:420px){.field-control__pair{grid-template-columns:1fr}}
 </style>

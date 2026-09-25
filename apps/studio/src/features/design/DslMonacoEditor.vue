@@ -91,8 +91,8 @@ onBeforeUnmount(() => {
 .dsl-editor header span{font-size:var(--pf-font-size-sm);font-weight:500;color:var(--pf-color-text-secondary)}
 .dsl-editor h2{font-size:var(--pf-font-size-lg);font-weight:600;margin:var(--pf-space-1) 0 0}
 .dsl-editor header b{font-size:var(--pf-font-size-sm);font-weight:500;padding:var(--pf-space-1) var(--pf-space-2);border:var(--pf-border-width) solid;border-radius:var(--pf-radius-sm)}
-.dsl-editor header .valid{color:#389e0d;background:#f6ffed;border-color:#b7eb8f}.dsl-editor header .invalid{color:var(--pf-color-error);background:#fff2f0;border-color:#ffccc7}
+.dsl-editor header .valid{color:var(--pf-color-success-text);background:#f6ffed;border-color:#b7eb8f}.dsl-editor header .invalid{color:var(--pf-color-error-text);background:#fff2f0;border-color:#ffccc7}
 .monaco-host{height:360px;min-width:0}.diagnostics{list-style:none;margin:0;padding:var(--pf-space-2) var(--pf-space-3);border-top:var(--pf-border-width) solid #ffccc7;background:#fff2f0;max-height:170px;overflow:auto}
 .diagnostics li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--pf-space-1) var(--pf-space-2);padding:var(--pf-space-2) 0;border-bottom:var(--pf-border-width) solid #ffccc7;font-size:var(--pf-font-size-sm)}
-.diagnostics code{color:var(--pf-color-error)}.diagnostics span{color:var(--pf-color-text-secondary);overflow-wrap:anywhere}.diagnostics p{grid-column:1/-1;margin:0;color:var(--pf-color-text);line-height:var(--pf-line-height)}
+.diagnostics code{color:var(--pf-color-error-text)}.diagnostics span{color:var(--pf-color-text-secondary);overflow-wrap:anywhere}.diagnostics p{grid-column:1/-1;margin:0;color:var(--pf-color-text);line-height:var(--pf-line-height)}
 </style>

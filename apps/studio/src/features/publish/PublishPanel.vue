@@ -36,9 +36,10 @@ const hardGates = ['dsl', 'preview-compile', 'typecheck', 'template-build'] as c
 .gates{padding:0;list-style:none;display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:var(--pf-space-2);margin:var(--pf-space-4) 0}
 .gates li{display:flex;flex-direction:column;gap:var(--pf-space-1);min-width:0;background:var(--pf-color-bg);border:var(--pf-border-width) solid var(--pf-color-border-secondary);border-radius:var(--pf-radius-sm);padding:var(--pf-space-2) var(--pf-space-3);font-size:var(--pf-font-size-sm)}
 .gates strong{font-weight:600;overflow-wrap:anywhere}.gates span{color:var(--pf-color-text-secondary)}
-.gates .passed{background:#f6ffed;border-color:#b7eb8f}.gates .passed span{color:#389e0d}
-.gates .failed{background:#fff2f0;border-color:#ffccc7}.gates .failed span{color:var(--pf-color-error)}
-.diagnostics{padding-left:var(--pf-space-5);color:var(--pf-color-error);font-size:var(--pf-font-size-sm)}.diagnostics li+li{margin-top:var(--pf-space-1)}
+.gates .passed{background:#f6ffed;border-color:#b7eb8f}.gates .passed span{color:var(--pf-color-success-text)}
+.gates .failed{background:#fff2f0;border-color:#ffccc7}.gates .failed span{color:var(--pf-color-error-text)}
+.diagnostics{padding-left:var(--pf-space-5);color:var(--pf-color-error-text);font-size:var(--pf-font-size-sm)}.diagnostics li+li{margin-top:var(--pf-space-1)}
+.publish-panel [role="alert"]{color:var(--pf-color-error-text)}
 .version{font-size:var(--pf-font-size-sm);font-weight:600;color:var(--pf-color-primary)}
 .publish-panel button{border:var(--pf-border-width) solid var(--pf-color-primary);border-radius:var(--pf-radius-sm);background:var(--pf-color-primary);color:var(--pf-color-surface);padding:var(--pf-space-2) var(--pf-space-4);font-size:var(--pf-font-size);font-weight:500;cursor:pointer;box-shadow:var(--pf-shadow-sm)}
 .publish-panel button:hover:not(:disabled){background:var(--pf-color-primary-hover);border-color:var(--pf-color-primary-hover)}.publish-panel button:focus-visible{outline:2px solid var(--pf-color-primary);outline-offset:2px}.publish-panel button:disabled{opacity:.55;cursor:wait}

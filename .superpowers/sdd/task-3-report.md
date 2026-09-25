@@ -38,3 +38,43 @@ The follow-up security review found that EOCD scanning could fall back to an ear
 ## Integration
 
 Added Mammoth and Cheerio runtime dependencies, fflate as an in-memory synthetic DOCX test dependency, lockfile entries, package scripts and TypeScript config. Updated the shared Vitest coverage target so this package's coverage run measures its own source. No ledger or Task 4 files were changed.
+
+---
+
+# Task 3 report — Studio editor, preview, and publication
+
+## Status
+
+Complete. Restyled the nine assigned Vue components with the shared PulseFlow theme tokens. The desktop editor retains its three columns and the existing 1100px and 760px layout transitions. Main editor, preview, and publication surfaces use the 6px `--pf-radius` token.
+
+Commit: `d9c008a feat: refresh studio design editor surfaces`
+
+## Changes
+
+- Replaced oversized serif headings, dark teal panels, and offset shadows with compact headings, neutral bordered surfaces, and blue focus and selection states.
+- Restyled palette entries, canvas nodes, inspector controls, entity fields, Monaco framing and diagnostics, embedded preview, release gates, and publish action.
+- Added narrow layout guards for palette entries, nested nodes, form controls, preview content, and gate cards.
+- Kept scripts, component contracts, interaction handlers, test IDs, mock preview behavior, and publication logic unchanged. Gate result classes only affect presentation.
+
+## Self-review and verification
+
+- Reviewed the scoped diff: changes are limited to styles and gate status classes in the nine assigned components.
+- `git diff --check` passed for the assigned files.
+- `pnpm --filter @pulseflow/studio typecheck` passed.
+- `pnpm --filter @pulseflow/studio build` passed. Vite reported its large chunk advisory for the Monaco-heavy Studio bundle and Rollup removed two third-party Zod comments with unsupported annotation placement.
+- No tests were added or run, per Task 3 instructions.
+
+## Concerns
+
+No blocking concerns. Narrow behavior was addressed in CSS; no browser screenshot review was performed.
+
+## Contrast review follow-up
+
+Added `--pf-color-error-text: #a8071a` and `--pf-color-success-text: #237804` to the shared Studio theme. Normal-sized status text now uses the darker tokens across preview errors, Monaco validity and diagnostics, release gate results and diagnostics, design feedback, and entity field feedback. Light status backgrounds and all status logic remain unchanged.
+
+Files changed: `apps/studio/src/styles/ant-design-theme.css`, `apps/studio/src/features/design/DesignStudioView.vue`, `apps/studio/src/features/design/CanvasNode.vue`, `apps/studio/src/features/design/EntityFieldEditor.vue`, `apps/studio/src/features/design/DslMonacoEditor.vue`, `apps/studio/src/features/preview/PreviewPanel.vue`, and `apps/studio/src/features/publish/PublishPanel.vue`.
+
+- `git diff --check -- apps/studio/src/styles/ant-design-theme.css apps/studio/src/features/design/DesignStudioView.vue apps/studio/src/features/design/CanvasNode.vue apps/studio/src/features/design/EntityFieldEditor.vue apps/studio/src/features/design/DslMonacoEditor.vue apps/studio/src/features/preview/PreviewPanel.vue apps/studio/src/features/publish/PublishPanel.vue`: passed with no output.
+- `pnpm --filter @pulseflow/studio typecheck`: passed (exit 0; `vue-tsc --noEmit -p tsconfig.json`).
+- `pnpm --filter @pulseflow/studio build`: passed (exit 0; Vite built 3929 modules in 9.61s). Rollup printed two third-party Zod annotation notices and Vite's large chunk advisory.
+- No tests were added or run, per follow-up instructions.
