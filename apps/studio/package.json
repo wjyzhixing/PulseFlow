@@ -13,6 +13,7 @@
   },
   "dependencies": {
     "@pulseflow/contracts": "workspace:*",
+    "@pulseflow/page-generator": "workspace:*",
     "@pulseflow/requirement-import": "workspace:*",
     "@pulseflow/ui-dsl": "workspace:*",
     "ant-design-vue": "^4.2.6",

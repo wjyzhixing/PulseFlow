@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { shallowRef } from 'vue';
+import { computed, shallowRef } from 'vue';
 import type { ComponentType } from '@pulseflow/ui-dsl';
 import { useRouter } from 'vue-router';
 import { editDraftSession, getDraftSession } from '../draft/draft-store';
@@ -7,12 +7,15 @@ import ComponentPalette, { type PaletteItem } from './ComponentPalette.vue';
 import DesignCanvas from './DesignCanvas.vue';
 import DslMonacoEditor from './DslMonacoEditor.vue';
 import NodePropertyEditor from './NodePropertyEditor.vue';
+import PreviewPanel from '../preview/PreviewPanel.vue';
+import { createMockData } from '../preview/mock-handlers';
 import { componentTypes, containerTypes, createDesignStore, type DesignEntityField, type DesignStore } from './design-store';
 
 const router = useRouter();
 const store = shallowRef<DesignStore | null>(null);
 const actionFeedback = shallowRef('');
 const actionFailed = shallowRef(false);
+const previewData = computed(() => store.value ? createMockData(store.value.dsl.value, store.value.entityFields) : {});
 const paletteLabels: Record<ComponentType, [string, string]> = {
   Card: ['卡片', '内容容器'], PageHeader: ['页头', '页面标题'], Form: ['表单', '字段容器'], FormItem: ['表单项', '绑定字段'],
   Input: ['输入框', '文本录入'], Select: ['选择器', '选项录入'], Button: ['按钮', '触发动作'], Table: ['数据表', '字段列表'],
@@ -90,6 +93,7 @@ function updateSelectedProps(patch: Record<string, unknown>) {
         <DslMonacoEditor :source="store.source.value" :diagnostics="store.diagnostics.value" @buffer="store.updateSourceBuffer" @edit="store.applyJsonEdit" />
       </aside>
     </div>
+    <PreviewPanel :dsl="store.dsl.value" :data="previewData" />
   </div>
 </template>
 

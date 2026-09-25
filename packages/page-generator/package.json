@@ -1,0 +1,24 @@
+{
+  "name": "@pulseflow/page-generator",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "exports": { ".": { "types": "./src/index.ts", "default": "./dist/index.js" } },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config ../../vitest.config.ts packages/page-generator/test",
+    "coverage": "vitest run --coverage --config ../../vitest.config.ts packages/page-generator/test",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "@pulseflow/ui-dsl": "workspace:*",
+    "ant-design-vue": "^4.2.6",
+    "vue": "^3.5.18"
+  },
+  "devDependencies": {
+    "@vue/compiler-sfc": "^3.5.18",
+    "@vue/test-utils": "^2.4.6",
+    "jsdom": "^26.1.0"
+  }
+}
