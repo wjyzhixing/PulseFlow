@@ -66,7 +66,7 @@ async function startBlankDraft() {
 .page-title { margin: 0 0 var(--pf-space-1); color: var(--pf-color-text); font: 600 24px/1.4 var(--pf-font-family); letter-spacing: 0; }
 .lede { margin: 0; color: var(--pf-color-text-secondary); line-height: var(--pf-line-height); }
 .blank-action { flex: none; margin: 0; min-height: 36px; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid var(--pf-color-border); border-radius: var(--pf-radius); background: var(--pf-color-surface); color: var(--pf-color-text); font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
-.blank-action:hover { border-color: var(--pf-color-primary); background: var(--pf-color-surface); color: var(--pf-color-primary); }
+.blank-action:hover { border-color: #0958d9; background: var(--pf-color-surface); color: #0958d9; }
 .blank-action:focus-visible { outline: 2px solid var(--pf-color-primary); outline-offset: 2px; }
 .blank-action:disabled { opacity: .55; cursor: not-allowed; }
 @media (max-width: 640px) { .page-heading { flex-direction: column; } .blank-action { width: 100%; } }

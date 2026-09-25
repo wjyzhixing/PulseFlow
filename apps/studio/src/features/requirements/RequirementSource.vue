@@ -25,7 +25,7 @@ defineExpose({ resetFile });
   </section>
 </template>
 <style scoped>
-.source-card { margin: 0 0 var(--pf-space-4); padding: var(--pf-space-5); background: var(--pf-color-surface); border: var(--pf-border-width) solid var(--pf-color-border); border-radius: var(--pf-radius-lg); box-shadow: var(--pf-shadow-sm); }
+.source-card { margin: 0 0 var(--pf-space-4); padding: var(--pf-space-5); background: var(--pf-color-surface); border: var(--pf-border-width) solid var(--pf-color-border); border-radius: var(--pf-radius); box-shadow: var(--pf-shadow-sm); }
 .source-card h2 { margin: 0 0 var(--pf-space-5); color: var(--pf-color-text); font-size: var(--pf-font-size-lg); font-weight: 600; }
 .field-group + .field-group { margin-top: var(--pf-space-4); }
 .field-label { margin: 0 0 var(--pf-space-2); color: var(--pf-color-text); font-size: var(--pf-font-size); font-weight: 500; }
@@ -35,12 +35,12 @@ defineExpose({ resetFile });
 .input:focus, .textarea:focus { border-color: var(--pf-color-primary); outline: 2px solid rgba(22, 119, 255, .16); outline-offset: 0; }
 .file-input { padding: var(--pf-space-1); font-size: var(--pf-font-size); }
 .file-input::file-selector-button { margin-right: var(--pf-space-3); padding: var(--pf-space-1) var(--pf-space-3); border: var(--pf-border-width) solid var(--pf-color-border); border-radius: var(--pf-radius-sm); background: var(--pf-color-surface); color: var(--pf-color-text); font: inherit; cursor: pointer; }
-.file-input::file-selector-button:hover { border-color: var(--pf-color-primary); color: var(--pf-color-primary); }
+.file-input::file-selector-button:hover { border-color: #0958d9; color: #0958d9; }
 .file-hint { margin: var(--pf-space-1) 0 0; color: var(--pf-color-text-secondary); font-size: var(--pf-font-size-sm); }
-.error { margin: var(--pf-space-4) 0 0; padding: var(--pf-space-2) var(--pf-space-3); color: var(--pf-color-error); background: #fff2f0; border: var(--pf-border-width) solid #ffccc7; border-radius: var(--pf-radius); }
+.error { margin: var(--pf-space-4) 0 0; padding: var(--pf-space-2) var(--pf-space-3); color: #a8071a; background: #fff2f0; border: var(--pf-border-width) solid #ffccc7; border-radius: var(--pf-radius); }
 .action-row { display: flex; justify-content: flex-end; margin-top: var(--pf-space-5); }
-.btn { min-height: 36px; margin: 0; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid var(--pf-color-primary); border-radius: var(--pf-radius); background: var(--pf-color-primary); color: #fff; font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
-.btn:hover { border-color: var(--pf-color-primary-hover); background: var(--pf-color-primary-hover); color: #fff; }
+.btn { min-height: 36px; margin: 0; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid #0958d9; border-radius: var(--pf-radius); background: #0958d9; color: #fff; font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
+.btn:hover { border-color: #003eb3; background: #003eb3; color: #fff; }
 .btn:focus-visible { outline: 2px solid var(--pf-color-primary); outline-offset: 2px; }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
 @media (max-width: 560px) { .source-card { padding: var(--pf-space-4); } .action-row .btn { width: 100%; } }
