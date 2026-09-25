@@ -1,0 +1,18 @@
+{
+  "name": "@pulseflow/cli",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "bin": {
+    "pulseflow": "./dist/main.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.test.json",
+    "test": "vitest run --config ../../vitest.config.ts packages/cli/test",
+    "lint": "eslint src test"
+  },
+  "dependencies": {
+    "commander": "^14.0.3"
+  }
+}
