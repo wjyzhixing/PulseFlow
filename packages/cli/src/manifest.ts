@@ -60,6 +60,33 @@ function assertExactManifestPaths(value: unknown, files: PublishedFile[]): asser
   }
 }
 
+function mappedGeneratedPath(path: string, pageId: string): string {
+  assertSafeRelativePath(path);
+  const generatedPrefix = 'src/generated/';
+  if (!path.startsWith(generatedPrefix) || path.length === generatedPrefix.length) {
+    throw new Error(`Unexpected generated file path: ${path}`);
+  }
+  const mapped = `src/views/${pageId}/${path.slice(generatedPrefix.length)}`;
+  assertSafeRelativePath(mapped);
+  return mapped;
+}
+
+function rewriteGeneratedManifest(content: string, pageId: string, sourceFiles: PublishedFile[]): string {
+  const manifest = objectValue(JSON.parse(content) as unknown);
+  if (manifest.pageId !== pageId || typeof manifest.entry !== 'string') {
+    throw new Error('Generated manifest identity or entry is invalid');
+  }
+  assertExactManifestPaths(manifest.files, sourceFiles);
+  const sourcePaths = new Set(sourceFiles.map((file) => file.path));
+  if (!sourcePaths.has(manifest.entry)) throw new Error('Generated manifest entry is missing');
+  const mapped = {
+    ...manifest,
+    entry: mappedGeneratedPath(manifest.entry, pageId),
+    files: (manifest.files as string[]).map((path) => mappedGeneratedPath(path, pageId))
+  };
+  return `${JSON.stringify(mapped, null, 2)}\n`;
+}
+
 export function normalizePublishedBundle(value: unknown, expectedPageId: string): PublishedBundle {
   const record = objectValue(value);
   const manifest = objectValue(record.manifest);
@@ -70,29 +97,48 @@ export function normalizePublishedBundle(value: unknown, expectedPageId: string)
     throw new Error('Publication manifest is invalid');
   }
 
-  const files = record.files.map((value): PublishedFile => {
+  const sourceFiles = record.files.map((value): PublishedFile => {
     const file = objectValue(value);
-    if (typeof file.path !== 'string' || typeof file.content !== 'string') throw new Error('Publication file is invalid');
+    if (typeof file.path !== 'string' || typeof file.content !== 'string'
+      || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(file.sha256)) {
+      throw new Error('Publication file or checksum is invalid');
+    }
     assertSafeRelativePath(file.path);
     if (file.path === MANIFEST_PATH) throw new Error(`Unsafe published file path: ${file.path}`);
     const digest = sha256(file.content);
-    if (file.sha256 !== undefined && file.sha256 !== digest) throw new Error(`Checksum mismatch for ${file.path}`);
+    if (file.sha256 !== digest) throw new Error(`Checksum mismatch for ${file.path}`);
+    mappedGeneratedPath(file.path, expectedPageId);
     return { path: file.path, content: file.content, sha256: digest };
   });
   const paths = new Set<string>();
-  for (const file of files) {
+  for (const file of sourceFiles) {
     if (paths.has(file.path)) throw new Error(`Duplicate published file path: ${file.path}`);
     paths.add(file.path);
   }
-  assertExactManifestPaths(manifest.files, files);
-  const embeddedManifest = files.find((file) => file.path === 'src/generated/manifest.json');
+  assertExactManifestPaths(manifest.files, sourceFiles);
+  if (typeof manifest.entry !== 'string' || !paths.has(manifest.entry)) {
+    throw new Error('Publication manifest entry is missing');
+  }
+  mappedGeneratedPath(manifest.entry, expectedPageId);
+  const embeddedManifest = sourceFiles.find((file) => file.path === 'src/generated/manifest.json');
   if (embeddedManifest) {
     const embedded = objectValue(JSON.parse(embeddedManifest.content) as unknown);
     if (embedded.pageId !== expectedPageId) {
       throw new Error('Generated manifest does not match published files');
     }
-    assertExactManifestPaths(embedded.files, files);
+    assertExactManifestPaths(embedded.files, sourceFiles);
+    if (typeof embedded.entry !== 'string' || !paths.has(embedded.entry)) {
+      throw new Error('Generated manifest entry is missing');
+    }
+    mappedGeneratedPath(embedded.entry, expectedPageId);
   }
+  const files = sourceFiles.map((file): PublishedFile => {
+    const path = mappedGeneratedPath(file.path, expectedPageId);
+    const content = file.path === 'src/generated/manifest.json'
+      ? rewriteGeneratedManifest(file.content, expectedPageId, sourceFiles)
+      : file.content;
+    return { path, content, sha256: sha256(content) };
+  });
   return { pageId: expectedPageId, versionId: record.versionId, files };
 }
 

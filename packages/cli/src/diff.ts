@@ -33,7 +33,7 @@ function lineChanges(before: string, after: string): string[] {
 export function createUnifiedDiff(conflicts: Conflict[]): string {
   return conflicts.map((conflict) => {
     const contents = conflictDiffContent(conflict);
-    const changeLines = contents ? lineChanges(contents.local, contents.remote) : [];
+    const changeLines = contents ? lineChanges(contents.local ?? '[deleted]', contents.remote) : [];
     return [
       `--- local/${conflict.path}`,
       `+++ published/${conflict.path}`,

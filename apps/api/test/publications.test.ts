@@ -1,10 +1,13 @@
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
+import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import type { Draft } from '@pulseflow/contracts';
 import type { GateResult } from '../src/services/release-gates.js';
 import { buildApp } from '../src/app.js';
+import { createApiClient } from '../../../packages/cli/src/api-client.js';
 import { validCandidate } from './fixtures/publish-candidates.js';
 
 const headers = { authorization: 'Bearer secret' };
@@ -88,8 +91,19 @@ describe('publication API', () => {
       expect(secondResponse.statusCode).toBe(201);
       const second = secondResponse.json().data;
       expect(second.versionId).not.toBe(first.versionId);
-      expect((await app.inject({ method: 'GET', url: `/api/cli/pages/${confirmed.pageId}/latest`, headers })).json().data)
-        .toMatchObject({ versionId: second.versionId, pageId: confirmed.pageId });
+      const latest = (await app.inject({ method: 'GET', url: `/api/cli/pages/${confirmed.pageId}/latest`, headers })).json().data;
+      expect(latest).toMatchObject({ versionId: second.versionId, pageId: confirmed.pageId });
+      expect(latest.files.every((file: { content: string; sha256: string }) =>
+        file.sha256 === createHash('sha256').update(file.content, 'utf8').digest('hex'))).toBe(true);
+      await app.listen({ port: 0, host: '127.0.0.1' });
+      const address = app.server.address() as AddressInfo;
+      const pulled = await createApiClient(`http://127.0.0.1:${address.port}`).fetchLatest(confirmed.pageId, 'secret');
+      expect(pulled.files.every((file) => file.path.startsWith(`src/views/${confirmed.pageId}/`))).toBe(true);
+      const localGeneratedManifest = pulled.files.find((file) => file.path === `src/views/${confirmed.pageId}/manifest.json`);
+      expect(JSON.parse(localGeneratedManifest!.content)).toMatchObject({
+        entry: `src/views/${confirmed.pageId}/Page.vue`,
+        files: expect.arrayContaining([`src/views/${confirmed.pageId}/Page.vue`])
+      });
       expect((await app.inject({ method: 'GET', url: `/api/publications/${first.versionId}`, headers })).json().data)
         .toMatchObject({ versionId: first.versionId, manifest: first.manifest });
       const bytes = await readFile(dbPath);

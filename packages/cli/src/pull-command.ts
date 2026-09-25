@@ -1,4 +1,4 @@
-import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, writeFile } from 'node:fs/promises';
+import { lstat, mkdir, mkdtemp, readFile, readdir, rename, rm, rmdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { createApiClient } from './api-client.js';
@@ -49,18 +49,21 @@ async function assertNoSymlinkParents(root: string, relativePath: string): Promi
   if (await exists(target) && (await lstat(target)).isSymbolicLink()) throw new Error(`Unsafe target path: ${relativePath}`);
 }
 
-export async function readManagedFiles(target: string): Promise<Map<string, string>> {
+export async function readManagedFiles(target: string, candidatePaths: string[] = []): Promise<Map<string, string>> {
   const manifestPath = join(target, MANIFEST_PATH);
-  let manifest: PulseFlowManifest;
-  try { manifest = parseLocalManifest(await readFile(manifestPath, 'utf8')); } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return new Map();
-    throw error;
+  let manifest: PulseFlowManifest | null = null;
+  try {
+    await assertNoSymlinkParents(target, MANIFEST_PATH);
+    manifest = parseLocalManifest(await readFile(manifestPath, 'utf8'));
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
   const files = new Map<string, string>();
-  for (const file of manifest.files) {
-    assertSafeRelativePath(file.path);
-    await assertNoSymlinkParents(target, file.path);
-    try { files.set(file.path, await readFile(join(target, file.path), 'utf8')); } catch (error) {
+  const paths = new Set([...(manifest?.files ?? []).map((file) => file.path), ...candidatePaths]);
+  for (const path of paths) {
+    assertSafeRelativePath(path);
+    await assertNoSymlinkParents(target, path);
+    try { files.set(path, await readFile(join(target, path), 'utf8')); } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
   }
@@ -93,15 +96,36 @@ export async function stageAndVerify(bundle: PublishedBundle): Promise<StagedBun
 
 async function writeAtomically(path: string, content: string): Promise<void> {
   const temporary = `${path}.pulseflow-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`;
-  await writeFile(temporary, content, { flag: 'wx' });
-  try { await rename(temporary, path); } catch (error) {
-    await rm(temporary, { force: true });
-    throw error;
+  try {
+    await writeFile(temporary, content, { flag: 'wx' });
+    await rename(temporary, path);
+  } finally { await rm(temporary, { force: true }); }
+}
+
+type AtomicWriter = (path: string, content: string) => Promise<void>;
+
+async function ensureParentDirectories(root: string, relativePath: string, created: string[]): Promise<void> {
+  const segments = dirname(relativePath).split('/').filter(Boolean);
+  let current = root;
+  for (const segment of segments) {
+    current = join(current, segment);
+    if (await exists(current)) {
+      const stat = await lstat(current);
+      if (stat.isSymbolicLink() || !stat.isDirectory()) throw new Error(`Unsafe target path: ${relativePath}`);
+    } else {
+      await mkdir(current);
+      created.push(current);
+    }
   }
 }
 
-export async function applyStagedFilesAtomically(staged: StagedBundle, target: string): Promise<void> {
+export async function applyStagedFilesAtomically(
+  staged: StagedBundle,
+  target: string,
+  atomicWriter: AtomicWriter = writeAtomically
+): Promise<void> {
   const root = resolve(target);
+  const rootExisted = await exists(root);
   await mkdir(root, { recursive: true });
   const generated = [
     ...staged.bundle.files.map((file) => ({ path: file.path, content: file.content })),
@@ -109,21 +133,31 @@ export async function applyStagedFilesAtomically(staged: StagedBundle, target: s
   ];
   const backups = new Map<string, Buffer | null>();
   const completed: string[] = [];
+  const createdDirectories = rootExisted ? [] : [root];
   try {
     for (const file of generated) {
       assertSafeRelativePath(file.path);
       await assertNoSymlinkParents(root, file.path);
       const path = join(root, file.path);
-      await mkdir(dirname(path), { recursive: true });
+      await ensureParentDirectories(root, file.path, createdDirectories);
       if (!backups.has(path)) backups.set(path, await exists(path) ? await readFile(path) : null);
-      await writeAtomically(path, file.content);
+      await atomicWriter(path, file.content);
       completed.push(path);
     }
   } catch (error) {
-    for (const path of completed.reverse()) {
-      const backup = backups.get(path);
-      if (backup === null) await rm(path, { force: true });
-      else if (backup) await writeAtomically(path, backup.toString('utf8'));
+    try {
+      for (const path of completed.reverse()) {
+        const backup = backups.get(path);
+        if (backup === null) await rm(path, { force: true });
+        else if (backup) await writeAtomically(path, backup.toString('utf8'));
+      }
+    } finally {
+      for (const directory of createdDirectories.reverse()) {
+        try { await rmdir(directory); } catch (cleanupError) {
+          const code = (cleanupError as NodeJS.ErrnoException).code;
+          if (code !== 'ENOENT' && code !== 'ENOTEMPTY') throw cleanupError;
+        }
+      }
     }
     throw error;
   }
@@ -153,11 +187,11 @@ export async function pullPublishedPage(options: PullOptions): Promise<PullResul
     if (previousManifest && previousManifest.pageId !== options.pageId) {
       throw new Error(`Target is managed by page ${previousManifest.pageId}`);
     }
-    const localFiles = await readManagedFiles(target);
+    const localFiles = await readManagedFiles(target, bundle.files.map((file) => file.path));
     const conflicts = checkConflicts(previousManifest, localFiles, bundle);
     if (conflicts.length) return { ok: false, message: 'Local changes conflict with the published page', conflicts, diff: createUnifiedDiff(conflicts) };
     await applyStagedFilesAtomically(staged, target);
-    const route = `{ path: '/${options.pageId}', component: () => import('./src/generated/Page.vue') }`;
+    const route = `{ path: '/${options.pageId}', component: () => import('./src/views/${options.pageId}/Page.vue') }`;
     return {
       ok: true,
       pageId: options.pageId,
