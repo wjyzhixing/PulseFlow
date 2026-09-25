@@ -40,5 +40,30 @@ async function confirm() {
   }
 }
 </script>
-<template><div class="panel" data-testid="draft-ready"><div class="eyebrow">MODEL / DRAFT REVIEW</div><h2 class="page-title">确认实体结构</h2><p class="lede">检查模型产出的字段、问题与 UI-DSL。编辑后运行本地结构校验。</p><template v-if="initial"><DraftEditor :fields-text="fieldsText" :dsl-text="dslText" :questions="questions" :feedback="feedback" :valid="valid" @update:fields-text="editFields" @update:dsl-text="editDsl" @answer="answer" @confirm="confirm"/><button class="btn design-entry" data-testid="enter-design" @click="router.push('/design')">进入设计画布 →</button></template><div v-else class="card"><p>当前没有生成的草稿。请先导入需求。</p><button class="btn" @click="router.push('/requirements')">返回需求导入</button></div></div></template>
-<style scoped>.design-entry{display:block;margin-left:auto;background:#173943;box-shadow:4px 4px 0 #d2f473}</style>
+<template>
+  <div class="panel draft-panel" data-testid="draft-ready">
+    <h2 class="page-title">确认实体结构</h2>
+    <p class="lede">检查模型产出的字段、问题与 UI-DSL。编辑后运行本地结构校验。</p>
+    <template v-if="initial">
+      <DraftEditor :fields-text="fieldsText" :dsl-text="dslText" :questions="questions" :feedback="feedback" :valid="valid" @update:fields-text="editFields" @update:dsl-text="editDsl" @answer="answer" @confirm="confirm"/>
+      <div class="action-row"><button class="btn design-entry" data-testid="enter-design" @click="router.push('/design')">进入设计画布 →</button></div>
+    </template>
+    <div v-else class="card empty-card">
+      <p>当前没有生成的草稿。请先导入需求。</p>
+      <button class="btn" @click="router.push('/requirements')">返回需求导入</button>
+    </div>
+  </div>
+</template>
+<style scoped>
+.draft-panel { max-width: 800px; }
+.page-title { margin: 0 0 var(--pf-space-1); color: var(--pf-color-text); font: 600 24px/1.4 var(--pf-font-family); letter-spacing: 0; }
+.lede { margin: 0 0 var(--pf-space-5); color: var(--pf-color-text-secondary); line-height: var(--pf-line-height); }
+.action-row { display: flex; justify-content: flex-end; margin-top: var(--pf-space-4); }
+.empty-card { margin: 0; padding: var(--pf-space-5); background: var(--pf-color-surface); border: var(--pf-border-width) solid var(--pf-color-border); border-radius: var(--pf-radius-lg); box-shadow: var(--pf-shadow-sm); }
+.empty-card p { margin: 0; color: var(--pf-color-text-secondary); }
+.btn { min-height: 36px; margin: var(--pf-space-4) 0 0; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid var(--pf-color-primary); border-radius: var(--pf-radius); background: var(--pf-color-primary); color: #fff; font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
+.btn:hover { border-color: var(--pf-color-primary-hover); background: var(--pf-color-primary-hover); color: #fff; }
+.btn:focus-visible { outline: 2px solid var(--pf-color-primary); outline-offset: 2px; }
+.design-entry { margin: 0; }
+@media (max-width: 560px) { .empty-card { padding: var(--pf-space-4); } .action-row .btn, .empty-card .btn { width: 100%; } }
+</style>
