@@ -9,10 +9,12 @@
     "typecheck": "pnpm -r --if-present typecheck",
     "test": "pnpm -r --if-present test",
     "coverage": "pnpm -r --if-present coverage",
+    "e2e": "pnpm --filter @pulseflow/cli build && playwright test",
     "lint": "eslint .",
     "verify": "pnpm typecheck && pnpm test && pnpm coverage && pnpm build"
   },
   "devDependencies": {
+    "@playwright/test": "^1.63.0",
     "@types/node": "^22.18.6",
     "@vitest/coverage-v8": "^4.1.11",
     "eslint": "^9.35.0",

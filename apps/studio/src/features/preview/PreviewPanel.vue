@@ -13,7 +13,7 @@ const PreviewContent = defineComponent({ setup() { return () => renderPage(props
 
 <template>
   <section class="preview-panel" aria-label="页面预览">
-    <header class="preview-panel__header"><h2>实时预览</h2><span>PREVIEW / SAFE RENDERER</span></header>
+    <header class="preview-panel__header"><h2>实时预览</h2><span data-testid="preview-status">{{ validation.ok ? '预览就绪' : '预览待修复' }} · SAFE RENDERER</span></header>
     <p v-if="!validation.ok" class="preview-panel__error" role="alert">{{ validation.diagnostics.map((item) => item.code).join(' · ') }}</p>
     <PreviewContent v-else />
     <p v-if="lastEvent" class="preview-panel__event" role="status">{{ lastEvent }}</p>

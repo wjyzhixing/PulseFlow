@@ -11,7 +11,7 @@ const hardGates = ['dsl', 'preview-compile', 'typecheck', 'template-build'] as c
 </script>
 
 <template>
-  <section class="publish-panel" aria-label="页面发布">
+  <section class="publish-panel" aria-label="页面发布" data-testid="publish">
     <header><div><span class="kicker">RELEASE CONTROL</span><h2>发布检查</h2></div><span data-testid="publish-status">{{ versionId ? '已发布' : '待发布' }}</span></header>
     <ol class="gates">
       <li v-for="id in hardGates" :key="id">

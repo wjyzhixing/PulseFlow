@@ -5,6 +5,10 @@ import 'monaco-editor/esm/vs/language/json/monaco.contribution';
 import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import type { DesignDiagnostic } from './design-diagnostics';
 
+declare global {
+  interface Window { __pulseflowMonacoEditor?: monaco.editor.IStandaloneCodeEditor }
+}
+
 const props = defineProps<{ source: string; diagnostics: readonly DesignDiagnostic[] }>();
 const emit = defineEmits<{ buffer: [source: string]; edit: [source: string] }>();
 const editorElement = useTemplateRef<HTMLElement>('editorElement');
@@ -44,6 +48,7 @@ onMounted(() => {
     scrollBeyondLastLine: false,
     tabSize: 2
   });
+  if (import.meta.env.DEV && import.meta.env.MODE === 'e2e') window.__pulseflowMonacoEditor = editor;
   changeSubscription = editor.onDidChangeModelContent(() => {
     if (applyingExternalValue || !editor) return;
     emit('buffer', editor.getValue());
@@ -65,6 +70,7 @@ onBeforeUnmount(() => {
   const model = editor?.getModel();
   changeSubscription?.dispose();
   editor?.dispose();
+  if (window.__pulseflowMonacoEditor === editor) delete window.__pulseflowMonacoEditor;
   model?.dispose();
 });
 </script>
