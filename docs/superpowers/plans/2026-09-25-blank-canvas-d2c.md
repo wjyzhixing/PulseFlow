@@ -50,19 +50,18 @@
 - Test: `apps/studio/test/design-editor.test.ts`
 
 **Interfaces:**
-- `DesignStore.entityFields` exposes the current immutable field list.
-- `DesignStore.addEntityField()` creates a valid default string field with unique id/key.
-- `DesignStore.updateEntityField(id, patch)` validates the resulting fields and current DSL before committing.
+- `DesignStore.entityFields` exposes the current field list as a readonly array and returns a fresh array after each successful edit.
+- `DesignStore.addEntityField(): DesignEntityField` creates a valid default string field with unique ID/key.
+- `DesignStore.updateEntityField(id, patch)` accepts only `key`, `label`, `type`, and `rules`, then validates the resulting fields and current DSL before committing.
 - `DesignStore.removeEntityField(id)` refuses removal while the DSL references the field.
-- `EntityFieldEditor` emits add/update/remove intent; store methods own validation and mutation.
+- `DesignStore` notifies `onEntityFieldsChange(fields)` after a successful immutable field change so the draft session keeps fields and DSL together, including after publication.
+- `EntityFieldEditor` emits add/update/remove intent; store methods own validation and mutation. It exposes supported field types, required, enum values, and format presets.
 
-- [ ] Write failing store tests for add, immutable update, duplicate-key rejection, invalid label rejection, and rejecting removal of a referenced field.
-- [ ] Run the focused store tests and verify they fail because the field APIs do not exist.
-- [ ] Implement immutable field state and validate each candidate through `validatePageDsl(currentDsl, candidateFields)` before committing.
-- [ ] Write failing component tests for adding/editing a field and showing validation feedback.
-- [ ] Run the focused component test and verify the editor is missing.
-- [ ] Implement the compact field editor and mount it in the design inspector column.
-- [ ] Run the store and design-editor tests.
+- [x] Add store tests for add, immutable update, duplicate-key rejection, invalid label/rule rejection, and rejecting removal of referenced fields.
+- [x] Implement immutable field state and validate each candidate through `validatePageDsl(currentDsl, candidateFields)` before committing.
+- [x] Add editor-flow tests for field creation/editing, required/format rules, and rejected-update feedback; implement and mount the field editor.
+- [x] Return deep copies from `entityFields` so callers cannot bypass validation by mutating internal state. The regression test failed before this fix and passed after it.
+- [x] Run the focused store and design-editor tests (56 tests passed).
 
 ## Task 3: Verify blank-canvas generation and publication
 
@@ -73,8 +72,9 @@
 **Interfaces:**
 - Blank drafts use the same `publish()` path as T2UI drafts; no second generator or publication protocol is introduced.
 
-- [ ] Add a failing browser flow that logs into Studio, starts blank, adds an entity field and a form component, configures its field binding, sees the preview, publishes, and asserts generated files contain the configured field/page text.
-- [ ] Run the focused E2E and verify it fails at the absent blank-start path.
-- [ ] Complete integration fixes without adding alternate DSL or publication behavior.
-- [ ] Run the focused E2E, `pnpm verify`, `pnpm e2e`, `pnpm lint`, and `pnpm audit --prod`.
-- [ ] Review the final diff for accidental requirement-text persistence or secrets.
+- [x] Add a browser flow that logs into Studio, starts blank, adds an entity field and a form component, sees the preview, publishes, and checks generated files.
+- [x] Save, validate, preview, and publish the blank design through the existing endpoints and release gates.
+- [x] Run `pnpm verify`, `pnpm e2e`, `pnpm lint`, `pnpm audit --prod`, and `git diff --check`.
+- [x] Review the diff for accidental requirement-text persistence or secrets; E2E data is synthetic.
+
+**Acceptance boundary:** Automated checks cover synthetic data. Real dedicated-line requirement text and an independent holdout have not been supplied, so their manual acceptance remains pending.

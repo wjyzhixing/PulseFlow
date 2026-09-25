@@ -4,7 +4,7 @@ import type { T2uiResult } from '@pulseflow/contracts';
 import App from '../src/App.vue';
 import { createStudioRouter } from '../src/router';
 import { clearToken, setToken } from '../src/features/auth/auth-store';
-import { clearDraft, getDraftSession, setDraft } from '../src/features/draft/draft-store';
+import { clearDraft, getDraftSession, setBlankDraft, setDraft } from '../src/features/draft/draft-store';
 
 const monacoHarness = vi.hoisted(() => {
   let value = '';
@@ -44,9 +44,10 @@ const result: T2uiResult = {
   semanticQuestions: []
 };
 
-async function setup(path = '/design', draftResult = result) {
+async function setup(path = '/design', draftResult: T2uiResult | 'blank' = result) {
   setToken('studio-token');
-  setDraft(draftResult);
+  if (draftResult === 'blank') setBlankDraft();
+  else setDraft(draftResult);
   const router = createStudioRouter();
   await router.push(path);
   await router.isReady();
@@ -59,6 +60,35 @@ beforeEach(() => { vi.useFakeTimers(); clearToken(); clearDraft(); monacoHarness
 afterEach(() => { vi.useRealTimers(); clearToken(); clearDraft(); });
 
 describe('design editor', () => {
+  it('creates entity fields on a blank design and binds components to them', async () => {
+    const { wrapper } = await setup('/design', 'blank');
+    expect(wrapper.get('[data-testid="entity-field-editor"]').text()).toContain('暂无实体字段');
+
+    await wrapper.get('[data-testid="add-entity-field"]').trigger('click');
+    await wrapper.get('[data-testid="field-label-field-1"]').setValue('客户名称');
+    await wrapper.get('[data-testid="field-required-field-1"]').setValue(true);
+    await wrapper.get('[data-testid="field-enum-field-1"]').setValue('企业,个人');
+    await wrapper.get('[data-testid="field-format-field-1"]').setValue('creditCode');
+    await wrapper.get('[data-testid="palette-FormItem"]').trigger('click');
+    await wrapper.get('[data-testid="palette-Input"]').trigger('click');
+
+    const savedFields = JSON.parse(getDraftSession()!.fieldsText) as Array<{ id: string; label: string; rules: unknown[] }>;
+    expect(savedFields).toMatchObject([{ id: 'field-1', label: '客户名称', rules: expect.arrayContaining([
+      { kind: 'required' }, { kind: 'enum', values: ['企业', '个人'] }, { kind: 'format', format: 'creditCode' }
+    ]) }]);
+    const savedDsl = JSON.parse(getDraftSession()!.dslText) as { nodes: Array<{ props: { fieldId: string } }> };
+    expect(savedDsl.nodes[0]?.props.fieldId).toBe('field-1');
+    expect(wrapper.get('[data-testid="preview-status"]').text()).toContain('预览就绪');
+  });
+
+  it('shows rejected field edits and leaves the valid entity field unchanged', async () => {
+    const { wrapper } = await setup('/design', 'blank');
+    await wrapper.get('[data-testid="add-entity-field"]').trigger('click');
+    await wrapper.get('[data-testid="field-key-field-1"]').setValue('bad key');
+    expect(wrapper.get('[data-testid="field-feedback"]').text()).toContain('未保存');
+    expect(JSON.parse(getDraftSession()!.fieldsText)).toMatchObject([{ id: 'field-1', key: 'field_1' }]);
+  });
+
   it('publishes the current design and starts a new draft after a published page changes', async () => {
     const { wrapper } = await setup();
     await wrapper.get('[data-testid="palette-Button"]').trigger('click');
@@ -82,6 +112,27 @@ describe('design editor', () => {
       await wrapper.get('[data-testid="palette-Tag"]').trigger('click');
       expect(getDraftSession()?.id).not.toBe(originalId);
       expect(getDraftSession()?.saved).toBe(false);
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it('keeps entity field edits when creating a draft from a published design', async () => {
+    const { wrapper } = await setup();
+    const originalId = getDraftSession()!.id;
+    const gates = (['dsl', 'preview-compile', 'typecheck', 'template-build', 'eslint'] as const)
+      .map((id) => ({ id, status: 'passed', blocking: id !== 'eslint', diagnostics: [] }));
+    const fetchMock = vi.fn().mockImplementation(async (path: string, options: RequestInit) => {
+      if (path === '/api/drafts') return new Response(JSON.stringify({ ok: true, data: JSON.parse(String(options.body)) }), { status: 201 });
+      return new Response(JSON.stringify({ ok: true, data: { pageId: 'orders', versionId: 'orders-v1', createdAt: '2026-09-25T00:00:00.000Z', manifest: {}, files: [], gates } }), { status: 201 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await wrapper.get('[data-testid="publish-action"]').trigger('click');
+      await flushPromises();
+      expect(wrapper.get('[data-testid="publish-status"]').text()).toBe('已发布');
+      await wrapper.get('[data-testid="field-label-company"]').setValue('客户名称');
+      expect(getDraftSession()?.id).not.toBe(originalId);
+      expect(JSON.parse(getDraftSession()!.fieldsText)).toMatchObject([{ id: 'company', label: '客户名称' }]);
+      expect(JSON.parse(getDraftSession()!.dslText).pageId).toBe('orders');
+      expect(getDraftSession()?.dirty).toBe(true);
     } finally { vi.unstubAllGlobals(); }
   });
   it('moves edits made during publication into a new draft', async () => {

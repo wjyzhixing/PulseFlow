@@ -86,3 +86,46 @@ test('imports a synthetic requirement, edits and publishes a page, then safely p
     await rm(target, { recursive: true, force: true });
   }
 });
+
+test('starts D2C from a blank canvas and publishes generated Vue code with designer fields', async ({ page }) => {
+  test.setTimeout(480_000);
+  await page.goto('/');
+  await page.getByTestId('token-input').fill(workspaceAuth);
+  await page.getByTestId('login-submit').click();
+  await expect(page.getByTestId('start-blank-draft')).toBeVisible();
+
+  await page.getByTestId('start-blank-draft').click();
+  await expect(page.locator('.design-canvas')).toContainText('空白画布');
+  await expect(page.getByTestId('entity-field-editor')).toBeVisible();
+  await page.getByTestId('add-entity-field').click();
+  await page.getByTestId('field-label-field-1').fill('客户名称');
+  await page.getByTestId('field-key-field-1').fill('customerName');
+  await page.getByTestId('field-required-field-1').check();
+
+  await page.getByTestId('palette-Form').click();
+  await page.getByTestId('canvas-node-form-1').click();
+  await page.getByTestId('palette-FormItem').click();
+  await page.getByTestId('canvas-node-form-item-1').click();
+  await page.getByTestId('palette-Input').click();
+  await expect(page.getByRole('region', { name: '页面预览' })).toContainText('客户名称');
+  await expect(page.getByTestId('preview-status')).toContainText('预览就绪');
+
+  await page.getByTestId('publish').getByTestId('publish-action').click();
+  await expect(page.getByTestId('publish-status')).toHaveText('已发布', { timeout: 420_000 });
+  for (const label of ['DSL', '预览编译', '类型检查', '干净模板构建']) {
+    await expect(page.locator('.gates li').filter({ hasText: label }).getByText('通过', { exact: true })).toBeVisible({ timeout: 120_000 });
+  }
+
+  const versionText = await page.locator('.version').textContent();
+  const versionId = versionText?.replace('版本 ', '').trim();
+  expect(versionId).toBeTruthy();
+  const response = await page.request.get(`http://127.0.0.1:${apiPort}/api/publications/${versionId}`, {
+    headers: { Authorization: `Bearer ${workspaceAuth}` }
+  });
+  expect(response.ok()).toBe(true);
+  const publication = await response.json() as { data: { files: Array<{ path: string; content: string }> } };
+  const generatedTypes = publication.data.files.find((file) => file.path.endsWith('/types.ts'))?.content ?? '';
+  const generatedPage = publication.data.files.find((file) => file.path.endsWith('/Page.vue'))?.content ?? '';
+  expect(generatedTypes).toContain('field-1');
+  expect(generatedPage).toContain('客户名称');
+});

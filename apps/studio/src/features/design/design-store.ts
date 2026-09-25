@@ -1,5 +1,5 @@
 import { computed, readonly, shallowRef, type ComputedRef, type DeepReadonly, type Ref } from 'vue';
-import { validatePageDsl, type ComponentType } from '@pulseflow/ui-dsl';
+import { validatePageDsl, type ComponentType, type FieldRule } from '@pulseflow/ui-dsl';
 import { jsonParseDiagnostic, schemaDiagnostics, type DesignDiagnostic } from './design-diagnostics';
 
 export type DesignPageDsl = Extract<ReturnType<typeof validatePageDsl>, { ok: true }>['dsl'];
@@ -21,6 +21,9 @@ export interface DesignStore {
   selectedNodeId: Readonly<Ref<string | null>>;
   selectedNode: ComputedRef<ReadonlyDesignNode | null>;
   entityFields: readonly DesignEntityField[];
+  addEntityField(): DesignEntityField;
+  updateEntityField(id: string, patch: Partial<Pick<DesignEntityField, 'key' | 'label' | 'type' | 'rules'>>): boolean;
+  removeEntityField(id: string): boolean;
   selectNode(nodeId: string | null): void;
   addNode(type: ComponentType, parentId: string | null, index: number): { ok: boolean; nodeId?: string };
   removeNode(nodeId: string): boolean;
@@ -54,6 +57,14 @@ function defaultProps(type: ComponentType, fields: readonly DesignEntityField[])
     Row: { gutter: 16 }, Col: { span: 12 }, Tag: { text: '标签', color: 'default' }, Badge: { text: '状态', status: 'default' }
   };
   return defaults[type];
+}
+
+function cloneRule(rule: FieldRule): FieldRule {
+  return rule.kind === 'enum' ? { ...rule, values: [...rule.values] } : { ...rule };
+}
+
+function cloneField(field: DesignEntityField): DesignEntityField {
+  return { ...field, rules: field.rules.map(cloneRule) };
 }
 
 function findNode(nodes: readonly UiNode[], nodeId: string): UiNode | null {
@@ -146,6 +157,7 @@ export function createDesignStore(options: {
   dsl: PageDsl;
   entityFields?: readonly DesignEntityField[];
   onDslChange?: (dsl: PageDsl, source: string) => void;
+  onEntityFieldsChange?: (fields: readonly DesignEntityField[]) => void;
 }): DesignStore {
   const initial = validatePageDsl(options.dsl, options.entityFields);
   if (!initial.ok) throw new Error(`Invalid initial PageDsl: ${initial.diagnostics.map((item) => item.path).join(', ')}`);
@@ -155,14 +167,14 @@ export function createDesignStore(options: {
   const sourceDirty = shallowRef(false);
   const sourcePending = shallowRef(false);
   const selectedNodeId = shallowRef<string | null>(null);
-  const fields = options.entityFields?.map((field) => ({ ...field, rules: field.rules.map((rule) => ({ ...rule })) })) ?? [];
+  const fields = shallowRef((options.entityFields ?? []).map(cloneField));
 
   const selectedNode = computed<ReadonlyDesignNode | null>(() => selectedNodeId.value
     ? findNode(currentDsl.value.nodes, selectedNodeId.value) as ReadonlyDesignNode | null
     : null);
 
   function commit(candidate: PageDsl): boolean {
-    const validated = validatePageDsl(candidate, fields);
+    const validated = validatePageDsl(candidate, fields.value);
     if (!validated.ok) return false;
     const canonicalSource = JSON.stringify(validated.dsl, null, 2);
     currentDsl.value = validated.dsl;
@@ -174,13 +186,43 @@ export function createDesignStore(options: {
     return true;
   }
 
+  function commitFields(candidate: readonly DesignEntityField[]): boolean {
+    const copied = candidate.map(cloneField);
+    if (!validatePageDsl(currentDsl.value, copied).ok) return false;
+    fields.value = copied;
+    options.onEntityFieldsChange?.(fields.value.map(cloneField));
+    return true;
+  }
+
+  function addEntityField(): DesignEntityField {
+    let suffix = 1;
+    while (fields.value.some((field) => field.id === `field-${suffix}` || field.key === `field_${suffix}`)) suffix += 1;
+    const field: DesignEntityField = { id: `field-${suffix}`, key: `field_${suffix}`, label: '新字段', type: 'string', rules: [] };
+    if (!commitFields([...fields.value, field])) throw new Error('Could not add a valid entity field');
+    return cloneField(field);
+  }
+
+  function updateEntityField(id: string, patch: Partial<Pick<DesignEntityField, 'key' | 'label' | 'type' | 'rules'>>): boolean {
+    const allowedKeys = new Set(['key', 'label', 'type', 'rules']);
+    if (Object.keys(patch).some((key) => !allowedKeys.has(key)) || !fields.value.some((field) => field.id === id)) return false;
+    const candidate = fields.value.map((field) => field.id === id
+      ? { ...field, ...patch, rules: patch.rules?.map(cloneRule) ?? field.rules.map(cloneRule) }
+      : cloneField(field));
+    return commitFields(candidate);
+  }
+
+  function removeEntityField(id: string): boolean {
+    if (!fields.value.some((field) => field.id === id)) return false;
+    return commitFields(fields.value.filter((field) => field.id !== id));
+  }
+
   function addNode(type: ComponentType, parentId: string | null, index: number): { ok: boolean; nodeId?: string } {
     flushSourceBuffer();
     if (!componentTypes.includes(type)) throw new Error(`Unsupported component: ${String(type)}`);
     const ids = collectIds(currentDsl.value.nodes);
     const base = type.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
     let suffix = 1; while (ids.has(`${base}-${suffix}`)) suffix += 1;
-    const node: UiNode = { id: `${base}-${suffix}`, type, props: defaultProps(type, fields), children: [], slots: [] };
+    const node: UiNode = { id: `${base}-${suffix}`, type, props: defaultProps(type, fields.value), children: [], slots: [] };
     const nodes = insertNode(currentDsl.value.nodes, parentId, index, node);
     if (!nodes || !commit({ ...currentDsl.value, nodes })) return { ok: false };
     selectedNodeId.value = node.id;
@@ -227,7 +269,7 @@ export function createDesignStore(options: {
       diagnostics.value = [jsonParseDiagnostic(nextSource, error)];
       return { ok: false, dsl: currentDsl.value, diagnostics: diagnostics.value };
     }
-    const validated = validatePageDsl(parsed, fields);
+    const validated = validatePageDsl(parsed, fields.value);
     if (!validated.ok) {
       diagnostics.value = schemaDiagnostics(nextSource, validated.diagnostics);
       return { ok: false, dsl: currentDsl.value, diagnostics: diagnostics.value };
@@ -246,7 +288,9 @@ export function createDesignStore(options: {
 
   return {
     dsl: readonly(currentDsl), source: readonly(source), diagnostics: readonly(diagnostics),
-    selectedNodeId: readonly(selectedNodeId), selectedNode, entityFields: fields,
+    selectedNodeId: readonly(selectedNodeId), selectedNode,
+    get entityFields() { return fields.value.map(cloneField); },
+    addEntityField, updateEntityField, removeEntityField,
     selectNode(nodeId) { selectedNodeId.value = nodeId && findNode(currentDsl.value.nodes, nodeId) ? nodeId : null; },
     addNode, removeNode, moveNode, updateNodeProps,
     updateSourceBuffer(nextSource) { source.value = nextSource; sourceDirty.value = true; sourcePending.value = true; },

@@ -55,6 +55,74 @@ describe('design store', () => {
     expect(store.dsl.value.nodes[0]?.props).toEqual({ title: '重点客户' });
   });
 
+  it('adds and updates entity fields immutably and notifies the draft owner', () => {
+    const changed: string[] = [];
+    store = createDesignStore({ dsl: page(), entityFields: fields, onEntityFieldsChange: (items) => changed.push(JSON.stringify(items)) });
+    const before = store.entityFields;
+    const added = store.addEntityField();
+
+    expect(added).toMatchObject({ id: expect.stringMatching(/^[A-Za-z0-9_-]+$/), key: expect.stringMatching(/^[A-Za-z0-9_-]+$/), type: 'string', rules: [] });
+    expect(store.entityFields).not.toBe(before);
+    expect(before).toHaveLength(1);
+    expect(store.entityFields).toHaveLength(2);
+    expect(store.updateEntityField('company', { label: '客户名称', rules: [{ kind: 'required' }] })).toBe(true);
+    expect(before[0]?.label).toBe('企业名称');
+    expect(store.entityFields[0]).toMatchObject({ label: '客户名称', rules: [{ kind: 'required' }] });
+    expect(changed).toHaveLength(2);
+  });
+
+  it('does not expose mutable references to the internal entity field state', () => {
+    const exposed = store.entityFields as unknown as Array<{ label: string; rules: Array<{ kind: string }> }>;
+    exposed[0]!.label = '篡改名称';
+    exposed[0]!.rules.push({ kind: 'required' });
+
+    expect(store.entityFields[0]).toMatchObject({ label: '企业名称', rules: [] });
+  });
+
+  it('rejects invalid field keys, labels, and rules without changing state', () => {
+    const other = store.addEntityField();
+    const before = store.entityFields;
+    expect(store.updateEntityField('company', { key: other.key })).toBe(false);
+    expect(store.updateEntityField('company', { label: '<script>bad</script>' })).toBe(false);
+    expect(store.updateEntityField('company', { rules: [{ kind: 'format', format: 'email' } as never] })).toBe(false);
+    expect(store.entityFields).toEqual(before);
+    expect(store.entityFields[0]?.label).toBe('企业名称');
+  });
+
+  it('refuses to remove fields referenced by the DSL and removes unused fields', () => {
+    const boundPage = {
+      ...page(),
+      nodes: [{
+        id: 'form', type: 'Form' as const, props: {}, slots: [], children: [
+          { id: 'field', type: 'FormItem' as const, props: { fieldId: 'company' }, slots: [], children: [] }
+        ]
+      }]
+    };
+    store = createDesignStore({ dsl: boundPage, entityFields: fields });
+    const before = store.entityFields;
+    expect(store.removeEntityField('company')).toBe(false);
+    expect(store.entityFields).toEqual(before);
+    const unused = store.addEntityField();
+    expect(store.removeEntityField(unused.id)).toBe(true);
+    expect(store.entityFields.map((field) => field.id)).toEqual(['company']);
+  });
+
+  it('keeps fields referenced by table columns, status slots, or conditions', () => {
+    const referencedPages = [
+      [{
+        id: 'table', type: 'Table' as const,
+        props: { columns: [{ field: 'company', title: '企业名称' }], dataSourceKey: 'records' }, children: [],
+        slots: [{ name: 'bodyCell' as const, field: 'company', cases: [{ equals: '企业', label: '企业', color: 'default' as const }] }]
+      }],
+      [{ id: 'button', type: 'Button' as const, props: { label: '查看' }, children: [], slots: [], condition: { fieldId: 'company', equals: '企业' } }]
+    ];
+    for (const nodes of referencedPages) {
+      store = createDesignStore({ dsl: { ...page(), nodes }, entityFields: fields });
+      expect(store.removeEntityField('company')).toBe(false);
+      expect(store.entityFields).toHaveLength(1);
+    }
+  });
+
   it('applies valid JSON to the canonical DSL and reflects canvas edits in the JSON buffer', () => {
     const edited = { ...page(), title: '新版订单', nodes: [] };
     expect(store.applyJsonEdit(JSON.stringify(edited))).toMatchObject({ ok: true, dsl: edited, diagnostics: [] });

@@ -9,6 +9,7 @@ import { PublicationGateError, publishDraft, type GateResult } from '../publish/
 import ComponentPalette, { type PaletteItem } from './ComponentPalette.vue';
 import DesignCanvas from './DesignCanvas.vue';
 import DslMonacoEditor from './DslMonacoEditor.vue';
+import EntityFieldEditor from './EntityFieldEditor.vue';
 import NodePropertyEditor from './NodePropertyEditor.vue';
 import PreviewPanel from '../preview/PreviewPanel.vue';
 import { createMockData } from '../preview/mock-handlers';
@@ -18,6 +19,8 @@ const router = useRouter();
 const store = shallowRef<DesignStore | null>(null);
 const actionFeedback = shallowRef('');
 const actionFailed = shallowRef(false);
+const fieldFeedback = shallowRef('');
+const fieldFailed = shallowRef(false);
 const publishPending = shallowRef(false);
 const publishError = shallowRef('');
 const publishedVersionId = shallowRef('');
@@ -30,6 +33,31 @@ const paletteLabels: Record<ComponentType, [string, string]> = {
 };
 const paletteItems: PaletteItem[] = componentTypes.map((type) => ({ type, label: paletteLabels[type][0], hint: paletteLabels[type][1] }));
 
+function isPublishedEdit(): boolean {
+  const current = getDraftSession();
+  return Boolean(publishedVersionId.value || (publishPending.value && current?.saved && !current.saving));
+}
+
+function startNewDraft(pageDsl: PageDsl, entityFields: readonly DesignEntityField[]): void {
+  const current = getDraftSession();
+  if (current) setDraft({ pageDsl, entityFields: entityFields.map((field) => ({ ...field, rules: field.rules.map((rule) => rule.kind === 'enum' ? { ...rule, values: [...rule.values] } : { ...rule }) })), semanticQuestions: current.questions });
+  publishedVersionId.value = '';
+  publishGates.value = [];
+}
+
+function onDesignDslChange(pageDsl: PageDsl, source: string): void {
+  const currentFields = store.value?.entityFields ?? [];
+  if (isPublishedEdit()) startNewDraft(pageDsl, currentFields);
+  else editDraftSession({ dslText: source, fieldsText: JSON.stringify(currentFields, null, 2) });
+}
+
+function onEntityFieldsChange(fields: readonly DesignEntityField[]): void {
+  if (!store.value) return;
+  const pageDsl = JSON.parse(JSON.stringify(store.value.dsl.value)) as PageDsl;
+  if (isPublishedEdit()) startNewDraft(pageDsl, fields);
+  else editDraftSession({ fieldsText: JSON.stringify(fields, null, 2) });
+}
+
 function initialize() {
   const draft = getDraftSession();
   if (!draft) { void router.replace('/requirements'); return; }
@@ -39,14 +67,8 @@ function initialize() {
     store.value = createDesignStore({
       dsl: parsedDsl,
       entityFields: parsedFields,
-      onDslChange: (dsl, source) => {
-        const current = getDraftSession();
-        if (publishedVersionId.value || (publishPending.value && current?.saved && !current.saving)) {
-          if (current) setDraft({ pageDsl: dsl, entityFields: parsedFields, semanticQuestions: current.questions });
-          publishedVersionId.value = '';
-          publishGates.value = [];
-        } else editDraftSession({ dslText: source });
-      }
+      onDslChange: onDesignDslChange,
+      onEntityFieldsChange
     });
   } catch {
     void router.replace('/draft');
@@ -81,6 +103,32 @@ function updateSelectedProps(patch: Record<string, unknown>) {
   const updated = store.value.updateNodeProps(store.value.selectedNodeId.value, patch);
   actionFeedback.value = updated ? '节点属性已更新' : '属性未保存：输入不符合组件白名单或 DSL 约束';
   actionFailed.value = !updated;
+}
+
+function addEntityField() {
+  if (!store.value) return;
+  try {
+    const added = store.value.addEntityField();
+    fieldFeedback.value = `${added.label} 已添加`;
+    fieldFailed.value = false;
+  } catch {
+    fieldFeedback.value = '字段未添加，请检查当前 UI-DSL';
+    fieldFailed.value = true;
+  }
+}
+
+function updateEntityField(id: string, patch: Partial<Pick<DesignEntityField, 'key' | 'label' | 'type' | 'rules'>>) {
+  if (!store.value) return;
+  const updated = store.value.updateEntityField(id, patch);
+  fieldFeedback.value = updated ? '字段已更新' : '字段未保存：检查字段键、名称、类型与校验规则';
+  fieldFailed.value = !updated;
+}
+
+function removeEntityField(id: string) {
+  if (!store.value) return;
+  const removed = store.value.removeEntityField(id);
+  fieldFeedback.value = removed ? '字段已移除' : '字段仍被页面组件引用，无法移除';
+  fieldFailed.value = !removed;
 }
 
 async function publish() {
@@ -137,6 +185,7 @@ async function publish() {
         />
       </main>
       <aside class="inspector-column">
+        <EntityFieldEditor :fields="store.entityFields" :feedback="fieldFeedback" :failed="fieldFailed" @add="addEntityField" @update="updateEntityField" @remove="removeEntityField" />
         <NodePropertyEditor :node="store.selectedNode.value" :entity-fields="store.entityFields" @update="updateSelectedProps" />
         <DslMonacoEditor :source="store.source.value" :diagnostics="store.diagnostics.value" @buffer="store.updateSourceBuffer" @edit="store.applyJsonEdit" />
       </aside>
