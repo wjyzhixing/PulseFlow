@@ -112,6 +112,30 @@ describe('design editor', () => {
     expect(getDraftSession()?.dslText).toContain('客户概览');
   });
 
+  it('does not overwrite invalid Monaco text or diagnostics when the canvas changes', async () => {
+    const { wrapper } = await setup();
+    const invalid = '{\n  "schemaVersion": 1,\n  "nodes": [';
+    monacoHarness.change(invalid);
+    await vi.advanceTimersByTimeAsync(300); await flushPromises();
+    await wrapper.get('[data-testid="palette-Button"]').trigger('click');
+    expect(monacoHarness.currentValue()).toBe(invalid);
+    expect(wrapper.text()).toContain('json.parse');
+    expect(wrapper.find('[data-testid="canvas-node-button-1"]').exists()).toBe(true);
+    expect(getDraftSession()?.dslText).toContain('"type": "Button"');
+    expect(getDraftSession()?.dslText).not.toBe(invalid);
+  });
+
+  it('does not overwrite Monaco input that is still inside the debounce window', async () => {
+    const { wrapper } = await setup();
+    const pending = JSON.stringify({ ...result.pageDsl, title: '正在输入' }, null, 2);
+    monacoHarness.change(pending);
+    await wrapper.get('[data-testid="palette-Button"]').trigger('click');
+    expect(monacoHarness.currentValue()).toContain('正在输入');
+    expect(monacoHarness.currentValue()).toContain('"type": "Button"');
+    expect(wrapper.find('[data-testid="canvas-node-button-1"]').exists()).toBe(true);
+    expect(getDraftSession()?.dslText).toContain('正在输入');
+  });
+
   it('moves siblings with accessible controls', async () => {
     const { wrapper } = await setup();
     await wrapper.get('[data-testid="palette-Button"]').trigger('click');
@@ -167,5 +191,48 @@ describe('design editor', () => {
     await wrapper.get('[data-testid="palette-Badge"]').trigger('click');
     expect(wrapper.find('[data-testid="canvas-node-badge-1"]').exists()).toBe(true);
     expect(getDraftSession()?.dslText).toContain('处理中');
+  });
+
+  it('reparents existing nodes into containers and PageHeader tags with drag and drop', async () => {
+    const dragResult: T2uiResult = {
+      ...result,
+      pageDsl: {
+        ...result.pageDsl,
+        nodes: [
+          { id: 'card', type: 'Card', props: { title: '卡片' }, children: [], slots: [] },
+          { id: 'form', type: 'Form', props: {}, children: [], slots: [] },
+          { id: 'row', type: 'Row', props: {}, children: [], slots: [] },
+          { id: 'header', type: 'PageHeader', props: { title: '页头' }, children: [], slots: [] },
+          { id: 'button', type: 'Button', props: { label: '提交' }, children: [], slots: [] },
+          { id: 'tag', type: 'Tag', props: { text: '状态' }, children: [], slots: [] }
+        ]
+      }
+    };
+    const { wrapper } = await setup('/design', dragResult);
+    await wrapper.get('[data-testid="canvas-node-button"]').trigger('dragstart');
+    await wrapper.get('[data-testid="drop-into-card"]').trigger('drop');
+    await wrapper.get('[data-testid="canvas-node-button"]').trigger('dragstart');
+    await wrapper.get('[data-testid="drop-into-form"]').trigger('drop');
+    await wrapper.get('[data-testid="canvas-node-button"]').trigger('dragstart');
+    await wrapper.get('[data-testid="drop-into-row"]').trigger('drop');
+    await wrapper.get('[data-testid="canvas-node-tag"]').trigger('dragstart');
+    await wrapper.get('[data-testid="drop-into-header"]').trigger('drop');
+    const source = JSON.parse(getDraftSession()?.dslText ?? '{}') as T2uiResult['pageDsl'];
+    expect(source.nodes.find((node) => node.id === 'row')?.children[0]?.id).toBe('button');
+    expect(source.nodes.find((node) => node.id === 'header')?.slots[0]).toMatchObject({ name: 'tags', children: [expect.objectContaining({ id: 'tag' })] });
+  });
+
+  it('shows property validation failures and leaves the DSL unchanged', async () => {
+    const headerResult: T2uiResult = {
+      ...result,
+      pageDsl: { ...result.pageDsl, nodes: [{ id: 'header', type: 'PageHeader', props: { title: '订单页头' }, children: [], slots: [] }] }
+    };
+    const { wrapper } = await setup('/design', headerResult);
+    const before = getDraftSession()?.dslText;
+    await wrapper.get('[data-testid="canvas-node-header"]').trigger('click');
+    await wrapper.get('[data-testid="prop-title"]').setValue('');
+    expect(wrapper.text()).toContain('属性未保存');
+    expect(monacoHarness.currentValue()).toBe(before);
+    expect(getDraftSession()?.dslText).toBe(before);
   });
 });

@@ -85,6 +85,25 @@ describe('design store', () => {
     ]));
   });
 
+  it('preserves invalid Monaco source and diagnostics across canvas mutations', () => {
+    const invalid = '{\n  "schemaVersion": 1,\n  "nodes": [';
+    store.applyJsonEdit(invalid);
+    const diagnostics = store.diagnostics.value;
+    expect(store.addNode('Button', null, 1).ok).toBe(true);
+    expect(store.source.value).toBe(invalid);
+    expect(store.diagnostics.value).toBe(diagnostics);
+    expect(store.dsl.value.nodes.map((node) => node.type)).toEqual(['Card', 'Button']);
+  });
+
+  it('preserves a pending Monaco buffer across canvas mutations', () => {
+    const pending = JSON.stringify({ ...page(), title: '尚未提交的标题' }, null, 2);
+    store.updateSourceBuffer(pending);
+    expect(store.addNode('Button', null, 1).ok).toBe(true);
+    expect(store.dsl.value.title).toBe('尚未提交的标题');
+    expect(store.dsl.value.nodes.map((node) => node.type)).toEqual(['Card', 'Button']);
+    expect(JSON.parse(store.source.value)).toMatchObject({ title: '尚未提交的标题', nodes: [expect.anything(), expect.objectContaining({ type: 'Button' })] });
+  });
+
   it('rejects invalid initial DSL and impossible mutation targets', () => {
     expect(() => createDesignStore({ dsl: { ...page(), schemaVersion: 2 as never }, entityFields: fields })).toThrow(/invalid initial/i);
     expect(store.addNode('Button', 'first', 0)).toEqual({ ok: false });
@@ -124,5 +143,27 @@ describe('design store', () => {
     expect(store.moveNode('tag', 'header', 2)).toBe(true);
     const tags = store.dsl.value.nodes[0]?.slots[0];
     expect(tags && 'children' in tags ? tags.children.map((node) => node.type) : []).toEqual(['Badge', 'Tag']);
+  });
+
+  it('moves existing nodes into supported containers and PageHeader tags without allowing cycles', () => {
+    const nested = {
+      ...page(),
+      nodes: [
+        { id: 'card', type: 'Card' as const, props: { title: '卡片' }, slots: [], children: [{ id: 'row', type: 'Row' as const, props: {}, slots: [], children: [] }] },
+        { id: 'form', type: 'Form' as const, props: {}, slots: [], children: [] },
+        { id: 'button', type: 'Button' as const, props: { label: '提交' }, slots: [], children: [] },
+        { id: 'header', type: 'PageHeader' as const, props: { title: '页头' }, slots: [], children: [] },
+        { id: 'tag', type: 'Tag' as const, props: { text: '状态' }, slots: [], children: [] }
+      ]
+    };
+    store = createDesignStore({ dsl: nested, entityFields: fields });
+    expect(store.moveNode('button', 'card', 1)).toBe(true);
+    expect(store.moveNode('button', 'form', 0)).toBe(true);
+    expect(store.moveNode('button', 'row', 0)).toBe(true);
+    expect(store.moveNode('tag', 'header', 0)).toBe(true);
+    expect(store.moveNode('card', 'row', 0)).toBe(false);
+    expect(store.dsl.value.nodes.find((node) => node.id === 'card')?.children[0]?.children[0]?.id).toBe('button');
+    const header = store.dsl.value.nodes.find((node) => node.id === 'header');
+    expect(header?.slots[0]).toMatchObject({ name: 'tags', children: [expect.objectContaining({ id: 'tag' })] });
   });
 });

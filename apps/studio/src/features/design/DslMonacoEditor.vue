@@ -6,7 +6,7 @@ import EditorWorker from 'monaco-editor/esm/vs/editor/editor.worker?worker';
 import type { DesignDiagnostic } from './design-diagnostics';
 
 const props = defineProps<{ source: string; diagnostics: readonly DesignDiagnostic[] }>();
-const emit = defineEmits<{ edit: [source: string] }>();
+const emit = defineEmits<{ buffer: [source: string]; edit: [source: string] }>();
 const editorElement = useTemplateRef<HTMLElement>('editorElement');
 let editor: monaco.editor.IStandaloneCodeEditor | null = null;
 let changeSubscription: monaco.IDisposable | null = null;
@@ -46,6 +46,7 @@ onMounted(() => {
   });
   changeSubscription = editor.onDidChangeModelContent(() => {
     if (applyingExternalValue || !editor) return;
+    emit('buffer', editor.getValue());
     if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => { if (editor) emit('edit', editor.getValue()); }, 250);
   });

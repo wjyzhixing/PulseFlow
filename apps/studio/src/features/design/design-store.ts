@@ -26,6 +26,8 @@ export interface DesignStore {
   removeNode(nodeId: string): boolean;
   moveNode(nodeId: string, parentId: string | null, index: number): boolean;
   updateNodeProps(nodeId: string, patch: Record<string, unknown>): boolean;
+  updateSourceBuffer(source: string): void;
+  flushSourceBuffer(): JsonEditResult | null;
   applyJsonEdit(source: string): JsonEditResult;
 }
 
@@ -150,6 +152,8 @@ export function createDesignStore(options: {
   const currentDsl = shallowRef<PageDsl>(initial.dsl);
   const source = shallowRef(JSON.stringify(initial.dsl, null, 2));
   const diagnostics = shallowRef<DesignDiagnostic[]>([]);
+  const sourceDirty = shallowRef(false);
+  const sourcePending = shallowRef(false);
   const selectedNodeId = shallowRef<string | null>(null);
   const fields = options.entityFields?.map((field) => ({ ...field, rules: field.rules.map((rule) => ({ ...rule })) })) ?? [];
 
@@ -160,14 +164,18 @@ export function createDesignStore(options: {
   function commit(candidate: PageDsl): boolean {
     const validated = validatePageDsl(candidate, fields);
     if (!validated.ok) return false;
+    const canonicalSource = JSON.stringify(validated.dsl, null, 2);
     currentDsl.value = validated.dsl;
-    source.value = JSON.stringify(validated.dsl, null, 2);
-    diagnostics.value = [];
-    options.onDslChange?.(validated.dsl, source.value);
+    if (!sourceDirty.value) {
+      source.value = canonicalSource;
+      diagnostics.value = [];
+    }
+    options.onDslChange?.(validated.dsl, canonicalSource);
     return true;
   }
 
   function addNode(type: ComponentType, parentId: string | null, index: number): { ok: boolean; nodeId?: string } {
+    flushSourceBuffer();
     if (!componentTypes.includes(type)) throw new Error(`Unsupported component: ${String(type)}`);
     const ids = collectIds(currentDsl.value.nodes);
     const base = type.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
@@ -180,6 +188,7 @@ export function createDesignStore(options: {
   }
 
   function removeNode(nodeId: string): boolean {
+    flushSourceBuffer();
     const result = detachNode(currentDsl.value.nodes, nodeId);
     if (!result.detached || !commit({ ...currentDsl.value, nodes: result.nodes })) return false;
     if (selectedNodeId.value && containsNode(result.detached, selectedNodeId.value)) selectedNodeId.value = null;
@@ -187,6 +196,7 @@ export function createDesignStore(options: {
   }
 
   function moveNode(nodeId: string, parentId: string | null, index: number): boolean {
+    flushSourceBuffer();
     const moving = findNode(currentDsl.value.nodes, nodeId);
     if (!moving || (parentId !== null && containsNode(moving, parentId))) return false;
     const detached = detachNode(currentDsl.value.nodes, nodeId);
@@ -196,6 +206,7 @@ export function createDesignStore(options: {
   }
 
   function updateNodeProps(nodeId: string, patch: Record<string, unknown>): boolean {
+    flushSourceBuffer();
     const node = findNode(currentDsl.value.nodes, nodeId);
     if (!node || Object.keys(patch).some((key) => !propKeys[node.type].includes(key))) return false;
     let found = false;
@@ -208,6 +219,8 @@ export function createDesignStore(options: {
 
   function applyJsonEdit(nextSource: string): JsonEditResult {
     source.value = nextSource;
+    sourceDirty.value = true;
+    sourcePending.value = false;
     let parsed: unknown;
     try { parsed = JSON.parse(nextSource) as unknown; }
     catch (error) {
@@ -221,15 +234,23 @@ export function createDesignStore(options: {
     }
     currentDsl.value = validated.dsl;
     diagnostics.value = [];
+    sourceDirty.value = false;
     if (selectedNodeId.value && !findNode(validated.dsl.nodes, selectedNodeId.value)) selectedNodeId.value = null;
     options.onDslChange?.(validated.dsl, nextSource);
     return { ok: true, dsl: validated.dsl, diagnostics: [] };
+  }
+
+  function flushSourceBuffer(): JsonEditResult | null {
+    return sourceDirty.value && sourcePending.value ? applyJsonEdit(source.value) : null;
   }
 
   return {
     dsl: readonly(currentDsl), source: readonly(source), diagnostics: readonly(diagnostics),
     selectedNodeId: readonly(selectedNodeId), selectedNode, entityFields: fields,
     selectNode(nodeId) { selectedNodeId.value = nodeId && findNode(currentDsl.value.nodes, nodeId) ? nodeId : null; },
-    addNode, removeNode, moveNode, updateNodeProps, applyJsonEdit
+    addNode, removeNode, moveNode, updateNodeProps,
+    updateSourceBuffer(nextSource) { source.value = nextSource; sourceDirty.value = true; sourcePending.value = true; },
+    flushSourceBuffer,
+    applyJsonEdit
   };
 }
