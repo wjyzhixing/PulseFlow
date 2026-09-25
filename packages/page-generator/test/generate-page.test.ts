@@ -32,6 +32,11 @@ describe('generatePage', () => {
     expect(() => generatePage(page)).toThrow('component.prop.unsupported');
   });
 
+  it('rejects an injected pageId before producing an SFC', () => {
+    const page = { ...validPage, pageId: 'x"><script>alert(1)</script>' };
+    expect(() => generatePage(page)).toThrow('schema.invalid');
+  });
+
   it('escapes script delimiters inside permitted option values', () => {
     const attack = '</script><script>alert(1)</script>';
     const page = { ...validPage, nodes: validPage.nodes.map((node) => node.type === 'Select'

@@ -16,7 +16,7 @@
 ## TDD 与实现
 
 - RED：先写 `render-page.test.ts`、`generate-page.test.ts` 和 `preview-panel.test.ts`；`pnpm --filter @pulseflow/page-generator test` 因两个实现模块缺失失败，Studio 预览测试因组件缺失失败。
-- GREEN：生成器 13/13、Studio 全量 41/41。覆盖未知组件拒绝、严格属性校验、有效 DSL 文本转义、`<img>` / `javascript:` 标签拒绝、页头 tags、表格 bodyCell 静态 case、原始值回退、限定状态条件、own-property handler、SFC 解析、可选属性、恶意 option value 的脚本分隔符编码及字段/集合名称碰撞。
+- GREEN：生成器 14/14、Studio 全量 41/41。覆盖未知组件拒绝、严格属性校验、有效 DSL 文本转义、`<img>` / `javascript:` 标签拒绝、注入式 `pageId` 在生成 SFC 前被 schema 拒绝、页头 tags、表格 bodyCell 静态 case、原始值回退、限定状态条件、own-property handler、SFC 解析、可选属性、恶意 option value 的脚本分隔符编码及字段/集合名称碰撞。
 - 预览先调用 `validatePageDsl`。组件来自冻结的显式 registry，属性按组件逐一映射；状态条件是字段与字面量的严格等值比较。没有动态组件导入、`eval`、`v-html`、任意 CSS 或 API 实现。
 - 生成页面是显式 AntDV 布局标记；`PageHeader.tags` 和 `Table.bodyCell` 由静态插槽代码承载。`jsLiteral` 对进入脚本的 `<`、`>`、`&` 和特殊换行字符编码。类型和事件文件只描述字段及 handler 契约。
 - `GeneratedFile[]` 包含 `src/generated/Page.vue`、`types.ts`、`events.ts`、`runtime.ts`、`components/PageHeader.vue`、`manifest.json`。页面仅相对导入生成的本地文件；manifest 列出全部源文件与 Vue/AntDV 依赖版本，便于 Task 10 CLI 作为完整 bundle 拉取。
@@ -27,7 +27,8 @@
 
 ## 验证
 
-- `pnpm verify`：通过，全部包 typecheck、tests、coverage 和 build；Studio 41/41，generator 13/13。生成器覆盖率为 Statements 97.29%、Branches 89.26%、Functions 100%、Lines 100%；Studio 为 91.77%、84.44%、90.67%、96.17%。各包均达到 80% 门槛。
+- `pnpm verify`：在本次仅测试补充之前通过，全部包 typecheck、tests、coverage 和 build；Studio 41/41，generator 当时 13/13。生成器覆盖率为 Statements 97.29%、Branches 89.26%、Functions 100%、Lines 100%；Studio 为 91.77%、84.44%、90.67%、96.17%。各包均达到 80% 门槛。
+- 复核补充：`pnpm --filter @pulseflow/page-generator exec vitest run --config ../../vitest.config.ts packages/page-generator/test/generate-page.test.ts -t 'rejects an injected pageId'`：1/1；`pnpm --filter @pulseflow/page-generator test`：14/14。
 - `pnpm lint`、`pnpm audit`、`git diff --check`：通过，audit 无已知漏洞。
 - Vue 模板默认状态 build/typecheck 通过；填入完整生成 bundle 后的独立 build/typecheck 通过。
 
