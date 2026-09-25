@@ -107,5 +107,21 @@ const dropIndex = computed(() => props.node.type === 'PageHeader'
 </template>
 
 <style scoped>
-.canvas-node{position:relative;margin:9px 0 9px calc(var(--node-depth) * 15px);border:1px solid #bdcbc7;background:#fffef8;box-shadow:3px 3px 0 #dfe7e1;border-radius:2px;outline:none}.canvas-node::before{content:'';position:absolute;left:-9px;top:-10px;bottom:-10px;border-left:1px solid #c6d0cc}.canvas-node.selected{border-color:#163b43;box-shadow:0 0 0 3px #d2f473,4px 4px 0 #183944}.canvas-node:focus-visible{box-shadow:0 0 0 3px #d2f473}.node-face{display:grid;grid-template-columns:30px auto minmax(0,1fr) auto;gap:10px;align-items:center;padding:12px}.node-index{font:10px 'DM Mono',monospace;color:#799092}.node-type{font:600 10px 'DM Mono',monospace;letter-spacing:.05em;background:#e8efeb;color:#214b51;padding:5px 7px}.node-summary{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:13px}.node-actions{display:flex;gap:4px}.node-actions button{width:27px;height:27px;border:1px solid #c5d0cd;background:#f5f5ed;color:#173943;border-radius:2px}.node-actions button:hover:not(:disabled){background:#173943;color:#fff}.node-actions button:disabled{opacity:.3;cursor:not-allowed}.node-actions .remove{color:#9b3731}.node-children{padding:0 10px 9px 3px;border-top:1px dashed #d9dfdb}.slot-children{padding-top:7px}.slot-label{display:block;margin-left:13px;color:#6f8888;font:600 8px 'DM Mono',monospace;letter-spacing:.13em}.drop-target{margin:5px 10px 10px;padding:5px;border:1px dashed #9db3ac;color:#6f8584;text-align:center;font:8px 'DM Mono',monospace;letter-spacing:.08em}.drop-target:hover{border-color:#173943;background:#eaf0e8;color:#173943}
+.canvas-node{position:relative;min-width:0;margin:var(--pf-space-2) 0 var(--pf-space-2) calc(var(--node-depth) * 12px);border:var(--pf-border-width) solid var(--pf-color-border);background:var(--pf-color-surface);border-radius:var(--pf-radius-sm);outline:none;box-shadow:var(--pf-shadow-sm)}
+.canvas-node.selected{border-color:var(--pf-color-primary);box-shadow:0 0 0 2px #e6f4ff}
+.canvas-node:focus-visible{outline:2px solid var(--pf-color-primary);outline-offset:2px}
+.node-face{display:grid;grid-template-columns:24px auto minmax(0,1fr) auto;gap:var(--pf-space-2);align-items:center;padding:var(--pf-space-2) var(--pf-space-3);min-width:0}
+.node-index{font-size:var(--pf-font-size-sm);color:var(--pf-color-text-secondary)}
+.node-type{font-size:var(--pf-font-size-sm);font-weight:600;background:#e6f4ff;color:var(--pf-color-primary);padding:var(--pf-space-1) var(--pf-space-2);border-radius:var(--pf-radius-sm)}
+.node-summary{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--pf-font-size-sm);font-weight:500}
+.node-actions{display:flex;gap:var(--pf-space-1)}
+.node-actions button{width:28px;height:28px;border:var(--pf-border-width) solid var(--pf-color-border);background:var(--pf-color-surface);color:var(--pf-color-text-secondary);border-radius:var(--pf-radius-sm);cursor:pointer}
+.node-actions button:hover:not(:disabled){border-color:var(--pf-color-primary);color:var(--pf-color-primary)}
+.node-actions button:focus-visible{outline:2px solid var(--pf-color-primary);outline-offset:1px}
+.node-actions button:disabled{opacity:.4;cursor:not-allowed}.node-actions .remove:hover{border-color:var(--pf-color-error);color:var(--pf-color-error)}
+.node-children{min-width:0;padding:0 var(--pf-space-2) var(--pf-space-2) var(--pf-space-2);border-top:var(--pf-border-width) solid var(--pf-color-border-secondary)}
+.slot-children{padding-top:var(--pf-space-2)}.slot-label{display:block;margin:0 0 var(--pf-space-1) var(--pf-space-2);color:var(--pf-color-text-secondary);font-size:var(--pf-font-size-sm)}
+.drop-target{margin:var(--pf-space-2);padding:var(--pf-space-2);border:var(--pf-border-width) dashed var(--pf-color-border);border-radius:var(--pf-radius-sm);color:var(--pf-color-text-secondary);text-align:center;font-size:var(--pf-font-size-sm)}
+.drop-target:hover{border-color:var(--pf-color-primary);background:#e6f4ff;color:var(--pf-color-primary)}
+@media(max-width:760px){.canvas-node{margin-left:calc(var(--node-depth) * 8px)}.node-face{grid-template-columns:auto minmax(0,1fr) auto;gap:var(--pf-space-1);padding:var(--pf-space-2)}.node-index{display:none}.node-actions button{width:26px;height:26px}}
 </style>

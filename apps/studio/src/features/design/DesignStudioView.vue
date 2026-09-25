@@ -196,5 +196,19 @@ async function publish() {
 </template>
 
 <style scoped>
-.design-studio{width:min(1480px,100%);margin:0 auto}.design-header{display:flex;justify-content:space-between;align-items:end;gap:30px;margin-bottom:22px}.design-kicker{font:600 10px 'DM Mono',monospace;letter-spacing:.16em;color:#386b6c}.design-header h1{font:700 clamp(28px,3vw,46px)/1.1 'Noto Serif SC',serif;letter-spacing:-.045em;margin:8px 0}.design-header p{color:#637b7d;font-size:13px;margin:0}.design-meta{display:grid;grid-template-columns:auto auto;gap:5px 14px;border-left:3px solid #d2f473;padding:10px 15px;background:#e7ebe4;min-width:180px}.design-meta span{font:9px 'DM Mono',monospace;color:#718386}.design-meta strong{font:600 10px 'DM Mono',monospace;text-align:right}.design-grid{display:grid;grid-template-columns:210px minmax(390px,1fr) minmax(330px,430px);min-height:720px;border:1px solid #173943;box-shadow:9px 9px 0 #cdd8d0;background:#f8f6ed}.canvas-column{padding:18px;min-width:0}.inspector-column{display:grid;align-content:start;gap:12px;padding:12px;background:#dfe5df;border-left:1px solid #b9c8c3;min-width:0}.action-feedback{margin:0 0 9px;padding:8px 10px;background:#e5f0e4;border-left:3px solid #18706b;color:#245e5d;font-size:11px}.action-feedback.failed{background:#fbefec;border-color:#b74943;color:#8b322e}@media(max-width:1100px){.design-grid{grid-template-columns:190px 1fr}.inspector-column{grid-column:1/-1;grid-template-columns:1fr 1.5fr;border-left:0;border-top:1px solid #b9c8c3}}@media(max-width:760px){.design-header{display:block}.design-meta{margin-top:15px}.design-grid{display:block}.inspector-column{display:block}.inspector-column>*+*{margin-top:12px}}
+.design-studio{width:min(1480px,100%);min-width:0;margin:0 auto;color:var(--pf-color-text)}
+.design-header{display:flex;justify-content:space-between;align-items:center;gap:var(--pf-space-5);margin-bottom:var(--pf-space-5)}
+.design-kicker{font-size:var(--pf-font-size-sm);font-weight:600;letter-spacing:.04em;color:var(--pf-color-primary)}
+.design-header h1{font-size:24px;line-height:1.35;font-weight:600;margin:var(--pf-space-1) 0}
+.design-header p{color:var(--pf-color-text-secondary);font-size:var(--pf-font-size-sm);margin:0}
+.design-meta{display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--pf-space-1) var(--pf-space-3);border:var(--pf-border-width) solid var(--pf-color-border-secondary);border-radius:var(--pf-radius);padding:var(--pf-space-2) var(--pf-space-3);background:var(--pf-color-surface);min-width:180px;max-width:100%}
+.design-meta span{font-size:var(--pf-font-size-sm);color:var(--pf-color-text-secondary)}
+.design-meta strong{font-size:var(--pf-font-size-sm);font-weight:600;text-align:right;overflow-wrap:anywhere}
+.design-grid{display:grid;grid-template-columns:210px minmax(0,1fr) minmax(330px,430px);min-height:720px;border:var(--pf-border-width) solid var(--pf-color-border);border-radius:var(--pf-radius);box-shadow:var(--pf-shadow-sm);background:var(--pf-color-surface);overflow:hidden}
+.canvas-column{padding:var(--pf-space-4);min-width:0;background:var(--pf-color-bg)}
+.inspector-column{display:grid;align-content:start;gap:var(--pf-space-3);padding:var(--pf-space-3);background:var(--pf-color-bg);border-left:var(--pf-border-width) solid var(--pf-color-border);min-width:0}
+.action-feedback{margin:0 0 var(--pf-space-3);padding:var(--pf-space-2) var(--pf-space-3);background:#f6ffed;border:var(--pf-border-width) solid #b7eb8f;border-radius:var(--pf-radius-sm);color:var(--pf-color-text);font-size:var(--pf-font-size-sm)}
+.action-feedback.failed{background:#fff2f0;border-color:#ffccc7}
+@media(max-width:1100px){.design-grid{grid-template-columns:190px minmax(0,1fr)}.inspector-column{grid-column:1/-1;grid-template-columns:minmax(0,1fr) minmax(0,1.5fr);border-left:0;border-top:var(--pf-border-width) solid var(--pf-color-border)}}
+@media(max-width:760px){.design-header{display:block}.design-meta{margin-top:var(--pf-space-3)}.design-grid{display:block}.canvas-column{padding:var(--pf-space-3)}.inspector-column{display:block}.inspector-column>*+*{margin-top:var(--pf-space-3)}}
 </style>

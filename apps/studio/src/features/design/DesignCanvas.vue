@@ -37,5 +37,13 @@ function dropNode(payload: MovePayload) {
 </template>
 
 <style scoped>
-.design-canvas{min-height:420px;padding:24px;background-color:#eef0e8;background-image:linear-gradient(#dce2dc 1px,transparent 1px),linear-gradient(90deg,#dce2dc 1px,transparent 1px);background-size:18px 18px;border:1px solid #cad3ce}.canvas-heading{display:flex;align-items:end;justify-content:space-between;padding-bottom:17px;border-bottom:2px solid #173943}.canvas-heading span,.canvas-heading b{font:600 10px 'DM Mono',monospace;letter-spacing:.12em;color:#547478}.canvas-heading h2{font:700 25px 'Noto Serif SC',serif;margin:5px 0 0}.node-stack{padding:12px 4px}.empty-state{min-height:300px;display:grid;place-content:center;text-align:center;color:#78908e}.empty-state strong{font:300 60px 'DM Mono',monospace;color:#adc0b8}.empty-state p{font-size:13px;line-height:1.8}
+.design-canvas{min-height:420px;min-width:0;padding:var(--pf-space-4);background:var(--pf-color-surface);border:var(--pf-border-width) solid var(--pf-color-border);border-radius:var(--pf-radius)}
+.canvas-heading{display:flex;align-items:center;justify-content:space-between;gap:var(--pf-space-2);padding-bottom:var(--pf-space-3);border-bottom:var(--pf-border-width) solid var(--pf-color-border-secondary)}
+.canvas-heading span,.canvas-heading b{font-size:var(--pf-font-size-sm);font-weight:500;color:var(--pf-color-text-secondary)}
+.canvas-heading h2{font-size:var(--pf-font-size-lg);font-weight:600;margin:var(--pf-space-1) 0 0}
+.node-stack{min-width:0;padding:var(--pf-space-3) 0;overflow-x:auto}
+.empty-state{min-height:300px;display:grid;place-content:center;text-align:center;color:var(--pf-color-text-secondary)}
+.empty-state strong{font-size:48px;font-weight:300;color:var(--pf-color-border)}
+.empty-state p{font-size:var(--pf-font-size);line-height:var(--pf-line-height)}
+@media(max-width:760px){.design-canvas{padding:var(--pf-space-3)}.canvas-heading{flex-wrap:wrap}}
 </style>
