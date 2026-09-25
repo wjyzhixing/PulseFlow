@@ -1,0 +1,99 @@
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { describe, expect, it } from 'vitest';
+import type { Draft } from '@pulseflow/contracts';
+import type { GateResult } from '../src/services/release-gates.js';
+import { buildApp } from '../src/app.js';
+import { validCandidate } from './fixtures/publish-candidates.js';
+
+const headers = { authorization: 'Bearer secret' };
+const confirmed: Draft = {
+  id: 'draft-1', pageId: validCandidate.pageDsl.pageId, status: 'confirmed',
+  pageDsl: validCandidate.pageDsl, entityFields: validCandidate.entityFields,
+  semanticQuestions: validCandidate.semanticQuestions
+};
+const allPassed: GateResult[] = (['dsl', 'preview-compile', 'typecheck', 'template-build', 'eslint'] as const)
+  .map((id) => ({ id, status: 'passed', blocking: id !== 'eslint', diagnostics: [] }));
+
+describe('publication API', () => {
+  it('does not publish an obsolete snapshot when a draft changes during release gates', async () => {
+    let signalGate: () => void = () => undefined;
+    let releaseGate: () => void = () => undefined;
+    const gateStarted = new Promise<void>((resolve) => { signalGate = resolve; });
+    const gateHold = new Promise<void>((resolve) => { releaseGate = resolve; });
+    const app = buildApp({ workspaceToken: 'secret', dbPath: ':memory:', releaseGateRunner: async () => {
+      signalGate();
+      await gateHold;
+      return allPassed;
+    } });
+    try {
+      await app.inject({ method: 'POST', url: '/api/drafts', headers, payload: confirmed });
+      const publishing = app.inject({ method: 'POST', url: '/api/publications', headers, payload: { draftId: confirmed.id } });
+      await gateStarted;
+      const changed = { ...confirmed, pageDsl: { ...confirmed.pageDsl, title: 'Changed during gates' } };
+      expect((await app.inject({ method: 'PUT', url: `/api/drafts/${confirmed.id}`, headers, payload: changed })).statusCode).toBe(200);
+      releaseGate();
+      expect((await publishing).statusCode).toBe(409);
+      expect((await app.inject({ method: 'GET', url: `/api/cli/pages/${confirmed.pageId}/latest`, headers })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'PUT', url: `/api/drafts/${confirmed.id}`, headers, payload: confirmed })).statusCode).toBe(200);
+    } finally { releaseGate(); await app.close(); }
+  });
+  it('requires authorization and a confirmed draft', async () => {
+    const app = buildApp({ workspaceToken: 'secret', dbPath: ':memory:', releaseGateRunner: async () => allPassed });
+    try {
+      expect((await app.inject({ method: 'POST', url: '/api/publications', payload: { draftId: 'draft-1' } })).statusCode).toBe(401);
+      expect((await app.inject({ method: 'POST', url: '/api/publications', headers, payload: { draftId: 'missing' } })).statusCode).toBe(404);
+      await app.inject({ method: 'POST', url: '/api/drafts', headers, payload: { ...confirmed, status: 'draft' } });
+      expect((await app.inject({ method: 'POST', url: '/api/publications', headers, payload: { draftId: 'draft-1' } })).statusCode).toBe(409);
+    } finally { await app.close(); }
+  });
+
+  it('blocks publication after any failed hard gate and preserves diagnostics', async () => {
+    for (const gate of ['dsl', 'preview-compile', 'typecheck', 'template-build'] as const) {
+      const results = [...allPassed.slice(0, allPassed.findIndex((item) => item.id === gate)),
+        { id: gate, status: 'failed' as const, blocking: true, diagnostics: [{ code: 'gate.failed', path: 'src/generated/Page.vue', message: 'Failed' }] }];
+      const app = buildApp({ workspaceToken: 'secret', dbPath: ':memory:', releaseGateRunner: async () => results });
+      try {
+        await app.inject({ method: 'POST', url: '/api/drafts', headers, payload: confirmed });
+        const response = await app.inject({ method: 'POST', url: '/api/publications', headers, payload: { draftId: 'draft-1' } });
+        expect(response.statusCode).toBe(422);
+        expect(response.json()).toMatchObject({ ok: false, error: { code: 'publication.gate_failed' }, gates: results });
+        expect((await app.inject({ method: 'GET', url: `/api/cli/pages/${confirmed.pageId}/latest`, headers })).statusCode).toBe(404);
+      } finally { await app.close(); }
+    }
+  });
+
+  it('publishes with an ESLint warning; keeps versions immutable and downloads only latest published', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pulseflow-publications-'));
+    const dbPath = join(directory, 'database.sqlite');
+    const warning = { ...allPassed.at(-1)!, status: 'failed' as const, diagnostics: [{ code: 'eslint.failed', path: 'src/generated/Page.vue', message: 'Style warning' }] };
+    const app = buildApp({ workspaceToken: 'secret', dbPath, releaseGateRunner: async () => [...allPassed.slice(0, -1), warning] });
+    try {
+      await app.inject({ method: 'POST', url: '/api/drafts', headers, payload: confirmed });
+      const firstResponse = await app.inject({ method: 'POST', url: '/api/publications', headers, payload: { draftId: confirmed.id, sourceText: 'PRIVATE REQUIREMENT BODY' } });
+      expect(firstResponse.statusCode).toBe(201);
+      const first = firstResponse.json().data;
+      expect(first).toMatchObject({ pageId: confirmed.pageId, gates: [...allPassed.slice(0, -1), warning] });
+      expect(first.versionId).toEqual(expect.any(String));
+      expect(first.manifest.entry).toBe('src/generated/Page.vue');
+      expect(first.files).toContainEqual(expect.objectContaining({ path: 'src/generated/Page.vue' }));
+      expect((await app.inject({ method: 'POST', url: '/api/publications', headers, payload: { draftId: confirmed.id } })).statusCode).toBe(409);
+      expect((await app.inject({ method: 'PUT', url: `/api/drafts/${confirmed.id}`, headers, payload: { ...confirmed, pageDsl: { ...confirmed.pageDsl, title: 'Modified' } } })).statusCode).toBe(409);
+      expect((await app.inject({ method: 'PUT', url: `/api/publications/${first.versionId}`, headers, payload: {} })).statusCode).toBe(404);
+
+      const nextDraft = { ...confirmed, id: 'draft-2', pageDsl: { ...confirmed.pageDsl, title: 'Modified' } };
+      await app.inject({ method: 'POST', url: '/api/drafts', headers, payload: nextDraft });
+      const secondResponse = await app.inject({ method: 'POST', url: '/api/publications', headers, payload: { draftId: nextDraft.id } });
+      expect(secondResponse.statusCode).toBe(201);
+      const second = secondResponse.json().data;
+      expect(second.versionId).not.toBe(first.versionId);
+      expect((await app.inject({ method: 'GET', url: `/api/cli/pages/${confirmed.pageId}/latest`, headers })).json().data)
+        .toMatchObject({ versionId: second.versionId, pageId: confirmed.pageId });
+      expect((await app.inject({ method: 'GET', url: `/api/publications/${first.versionId}`, headers })).json().data)
+        .toMatchObject({ versionId: first.versionId, manifest: first.manifest });
+      const bytes = await readFile(dbPath);
+      expect(bytes.includes(Buffer.from('PRIVATE REQUIREMENT BODY'))).toBe(false);
+    } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }
+  });
+});

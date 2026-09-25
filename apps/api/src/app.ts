@@ -6,14 +6,19 @@ import { hasValidBearerToken, unauthorized } from './auth/require-workspace-toke
 import { loadApiConfig } from './config.js';
 import { openDatabase } from './db/database.js';
 import { DraftRepository } from './db/draft-repository.js';
+import { PublicationRepository } from './db/publication-repository.js';
 import { registerDraftRoutes } from './routes/drafts.js';
+import { registerPublicationRoutes } from './routes/publications.js';
+import { registerCliDownloadRoutes } from './routes/cli-download.js';
 import { registerRequirementRoutes } from './routes/requirements.js';
 import { registerSessionRoutes } from './routes/session.js';
+import type { ReleaseGateRunner } from './services/publication-service.js';
 
 interface BuildAppOptions {
   workspaceToken?: string;
   dbPath?: string;
   modelConfig?: ModelConfig;
+  releaseGateRunner?: ReleaseGateRunner;
   rateLimit?: {
     max: number;
     timeWindow: number | string;
@@ -25,6 +30,7 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
   const workspaceToken = options.workspaceToken ?? config.workspaceToken;
   const app = Fastify();
   app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof Error && error.message === 'draft.published') return reply.code(409).send({ ok: false, error: { code: 'draft.published', message: 'Create a new draft to change a published page' } });
     const status = typeof error === 'object' && error !== null && 'statusCode' in error && typeof error.statusCode === 'number' ? error.statusCode : 500;
     const code = status === 429 ? 'rate.limited' : status === 413 ? 'request.too_large' : status < 500 ? 'request.invalid' : 'server.error';
     const message = status === 429 ? 'Too many requests' : status === 413 ? 'Request is too large' : status < 500 ? 'Invalid request' : 'Internal server error';
@@ -47,6 +53,8 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
       });
       protectedRoutes.register(async (requirements) => { registerRequirementRoutes(requirements); }, { prefix: '/api/requirements' });
       protectedRoutes.register(async (draftRoutes) => { registerDraftRoutes(draftRoutes, new DraftRepository(db), options.modelConfig); }, { prefix: '/api/drafts' });
+      protectedRoutes.register(async (publicationRoutes) => { registerPublicationRoutes(publicationRoutes, new DraftRepository(db), new PublicationRepository(db), options.releaseGateRunner); }, { prefix: '/api/publications' });
+      protectedRoutes.register(async (cliRoutes) => { registerCliDownloadRoutes(cliRoutes, new PublicationRepository(db)); }, { prefix: '/api/cli' });
     });
   });
   return app;

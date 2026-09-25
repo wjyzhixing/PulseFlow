@@ -1,8 +1,11 @@
 <script setup lang="ts">
 import { computed, shallowRef } from 'vue';
-import type { ComponentType } from '@pulseflow/ui-dsl';
+import type { ComponentType, EntityField, PageDsl } from '@pulseflow/ui-dsl';
 import { useRouter } from 'vue-router';
-import { editDraftSession, getDraftSession } from '../draft/draft-store';
+import { beginDraftSave, editDraftSession, finishDraftSaveFailure, getDraftSession, markDraftSaved, setDraft } from '../draft/draft-store';
+import { saveDraft } from '../draft/draft-api';
+import PublishPanel from '../publish/PublishPanel.vue';
+import { PublicationGateError, publishDraft, type GateResult } from '../publish/publication-api';
 import ComponentPalette, { type PaletteItem } from './ComponentPalette.vue';
 import DesignCanvas from './DesignCanvas.vue';
 import DslMonacoEditor from './DslMonacoEditor.vue';
@@ -15,6 +18,10 @@ const router = useRouter();
 const store = shallowRef<DesignStore | null>(null);
 const actionFeedback = shallowRef('');
 const actionFailed = shallowRef(false);
+const publishPending = shallowRef(false);
+const publishError = shallowRef('');
+const publishedVersionId = shallowRef('');
+const publishGates = shallowRef<GateResult[]>([]);
 const previewData = computed(() => store.value ? createMockData(store.value.dsl.value, store.value.entityFields) : {});
 const paletteLabels: Record<ComponentType, [string, string]> = {
   Card: ['卡片', '内容容器'], PageHeader: ['页头', '页面标题'], Form: ['表单', '字段容器'], FormItem: ['表单项', '绑定字段'],
@@ -32,7 +39,14 @@ function initialize() {
     store.value = createDesignStore({
       dsl: parsedDsl,
       entityFields: parsedFields,
-      onDslChange: (_dsl, source) => editDraftSession({ dslText: source })
+      onDslChange: (dsl, source) => {
+        const current = getDraftSession();
+        if (publishedVersionId.value || (publishPending.value && current?.saved && !current.saving)) {
+          if (current) setDraft({ pageDsl: dsl, entityFields: parsedFields, semanticQuestions: current.questions });
+          publishedVersionId.value = '';
+          publishGates.value = [];
+        } else editDraftSession({ dslText: source });
+      }
     });
   } catch {
     void router.replace('/draft');
@@ -68,6 +82,40 @@ function updateSelectedProps(patch: Record<string, unknown>) {
   actionFeedback.value = updated ? '节点属性已更新' : '属性未保存：输入不符合组件白名单或 DSL 约束';
   actionFailed.value = !updated;
 }
+
+async function publish() {
+  if (!store.value || publishPending.value) return;
+  publishError.value = '';
+  publishGates.value = [];
+  const pendingEdit = store.value.flushSourceBuffer();
+  if (pendingEdit && !pendingEdit.ok || store.value.diagnostics.value.length) {
+    publishError.value = '请先修正 DSL 编辑器中的错误';
+    publishGates.value = [{ id: 'dsl', status: 'failed', blocking: true,
+      diagnostics: store.value.diagnostics.value.map((item) => ({ code: item.code, path: item.path, message: item.message })) }];
+    return;
+  }
+  const session = getDraftSession();
+  if (!session || !beginDraftSave(session.id)) return;
+  publishPending.value = true;
+  try {
+    const pageDsl = JSON.parse(JSON.stringify(store.value.dsl.value)) as PageDsl;
+    const entityFields = JSON.parse(session.fieldsText) as EntityField[];
+    const saved = await saveDraft({ id: session.id, pageId: pageDsl.pageId, pageDsl, entityFields,
+      semanticQuestions: session.questions.map((question) => ({ ...question })), status: 'confirmed' }, session.saved);
+    if (!markDraftSaved(session.id, saved.id, session.revision)) {
+      publishError.value = '设计在保存期间发生变化，请重新发布';
+      return;
+    }
+    const result = await publishDraft(saved.id);
+    publishGates.value = result.gates;
+    if (getDraftSession()?.id === saved.id) publishedVersionId.value = result.versionId;
+    else actionFeedback.value = `版本 ${result.versionId} 已发布；当前修改已进入新草稿`;
+  } catch (error) {
+    finishDraftSaveFailure(session.id);
+    if (error instanceof PublicationGateError) publishGates.value = error.gates;
+    publishError.value = error instanceof Error ? error.message : '发布失败，请重试';
+  } finally { publishPending.value = false; }
+}
 </script>
 
 <template>
@@ -94,6 +142,7 @@ function updateSelectedProps(patch: Record<string, unknown>) {
       </aside>
     </div>
     <PreviewPanel :dsl="store.dsl.value" :data="previewData" />
+    <PublishPanel :gates="publishGates" :version-id="publishedVersionId" :pending="publishPending" :error="publishError" @publish="publish" />
   </div>
 </template>
 

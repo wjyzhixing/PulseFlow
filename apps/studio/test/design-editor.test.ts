@@ -59,6 +59,52 @@ beforeEach(() => { vi.useFakeTimers(); clearToken(); clearDraft(); monacoHarness
 afterEach(() => { vi.useRealTimers(); clearToken(); clearDraft(); });
 
 describe('design editor', () => {
+  it('publishes the current design and starts a new draft after a published page changes', async () => {
+    const { wrapper } = await setup();
+    await wrapper.get('[data-testid="palette-Button"]').trigger('click');
+    const originalId = getDraftSession()!.id;
+    const gates = (['dsl', 'preview-compile', 'typecheck', 'template-build', 'eslint'] as const)
+      .map((id) => ({ id, status: 'passed', blocking: id !== 'eslint', diagnostics: [] }));
+    const fetchMock = vi.fn().mockImplementation(async (path: string, options: RequestInit) => {
+      if (path === '/api/drafts') return new Response(JSON.stringify({ ok: true, data: JSON.parse(String(options.body)) }), { status: 201 });
+      return new Response(JSON.stringify({ ok: true, data: { pageId: 'orders', versionId: 'orders-v1', createdAt: '2026-09-25T00:00:00.000Z', manifest: {}, files: [], gates } }), { status: 201 });
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await wrapper.get('[data-testid="publish-action"]').trigger('click');
+      await flushPromises();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      const saved = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
+      expect(saved.status).toBe('confirmed');
+      expect(saved.pageDsl.nodes).toContainEqual(expect.objectContaining({ type: 'Button' }));
+      expect(wrapper.get('[data-testid="publish-status"]').text()).toContain('已发布');
+      expect(wrapper.text()).toContain('orders-v1');
+      await wrapper.get('[data-testid="palette-Tag"]').trigger('click');
+      expect(getDraftSession()?.id).not.toBe(originalId);
+      expect(getDraftSession()?.saved).toBe(false);
+    } finally { vi.unstubAllGlobals(); }
+  });
+  it('moves edits made during publication into a new draft', async () => {
+    const { wrapper } = await setup();
+    const originalId = getDraftSession()!.id;
+    let completePublication: (value: Response) => void = () => undefined;
+    const pendingPublication = new Promise<Response>((resolve) => { completePublication = resolve; });
+    const fetchMock = vi.fn().mockImplementation(async (path: string, options: RequestInit) => {
+      if (path === '/api/drafts') return new Response(JSON.stringify({ ok: true, data: JSON.parse(String(options.body)) }), { status: 201 });
+      return pendingPublication;
+    });
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await wrapper.get('[data-testid="publish-action"]').trigger('click');
+      await flushPromises();
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      await wrapper.get('[data-testid="palette-Button"]').trigger('click');
+      expect(getDraftSession()?.id).not.toBe(originalId);
+      completePublication(new Response(JSON.stringify({ ok: true, data: { pageId: 'orders', versionId: 'orders-v1', createdAt: '2026-09-25T00:00:00.000Z', manifest: {}, files: [], gates: [] } }), { status: 201 }));
+      await flushPromises();
+      expect(getDraftSession()?.saved).toBe(false);
+    } finally { vi.unstubAllGlobals(); }
+  });
   it('redirects an empty design session to requirement intake', async () => {
     setToken('studio-token');
     const router = createStudioRouter();

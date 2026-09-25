@@ -41,12 +41,18 @@ importers:
       '@pulseflow/model-adapter':
         specifier: workspace:*
         version: link:../../packages/model-adapter
+      '@pulseflow/page-generator':
+        specifier: workspace:*
+        version: link:../../packages/page-generator
       '@pulseflow/requirement-import':
         specifier: workspace:*
         version: link:../../packages/requirement-import
       '@pulseflow/ui-dsl':
         specifier: workspace:*
         version: link:../../packages/ui-dsl
+      '@vue/compiler-sfc':
+        specifier: ^3.5.43
+        version: 3.5.43
       better-sqlite3:
         specifier: ^13.0.3
         version: 13.0.3
