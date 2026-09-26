@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { deflateSync } from 'node:zlib';
-import { generateImage } from '../src/image-client.js';
+import { generateImage, generateImageWithTestDependencies } from '../src/image-client.js';
+import * as packageApi from '../src/index.js';
 import type { ImageModelConfig } from '../src/config.js';
 
 function crc32(bytes: Uint8Array): number {
@@ -59,6 +60,11 @@ const baseConfig: ImageModelConfig = {
 const imageResponse = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'x-request-id': 'req-1' } });
 
 describe('generateImage', () => {
+  it('keeps test transport injection out of the package API', () => {
+    expect(packageApi.generateImage).toBeTypeOf('function');
+    expect(packageApi).not.toHaveProperty('generateImageWithTestDependencies');
+  });
+
   it('sends a single OpenAI image request to the exact configured URL and decodes base64 PNG', async () => {
     const fetchImpl = vi.fn(async () => imageResponse({ data: [{ b64_json: Buffer.from(png).toString('base64') }] }));
     const result = await generateImage('Draw a flower', { ...baseConfig, fetchImpl });
@@ -75,7 +81,7 @@ describe('generateImage', () => {
     const fetchImpl = vi.fn(async () => imageResponse({ data: [{ url: resultUrl }] }));
     const downloadPinnedResult = vi.fn(async () => new Response(png, { headers: { 'content-type': 'image/png' } }));
     const resolveImpl = vi.fn(async () => [{ address: '8.8.8.8', family: 4 as const }]);
-    const result = await generateImage('Draw', { ...baseConfig, allowedResultHosts: ['images.example'], fetchImpl: fetchImpl as typeof fetch }, {
+    const result = await generateImageWithTestDependencies('Draw', { ...baseConfig, allowedResultHosts: ['images.example'], fetchImpl: fetchImpl as typeof fetch }, {
       resolveResultHost: resolveImpl as never,
       downloadPinnedResult
     });
@@ -96,7 +102,7 @@ describe('generateImage', () => {
   it('uses the native DashScope multimodal request and image response shape', async () => {
     const fetchImpl = vi.fn(async () => imageResponse({ output: { choices: [{ message: { content: [{ image: 'https://8.8.8.8/image.png' }] } }] } }));
     const downloadPinnedResult = vi.fn(async () => new Response(png));
-    await generateImage('Draw', { ...baseConfig, mode: 'dashscope-native', fetchImpl: fetchImpl as typeof fetch }, { downloadPinnedResult });
+    await generateImageWithTestDependencies('Draw', { ...baseConfig, mode: 'dashscope-native', fetchImpl: fetchImpl as typeof fetch }, { downloadPinnedResult });
     expect(fetchImpl).toHaveBeenCalledOnce();
     expect(downloadPinnedResult).toHaveBeenCalledWith({ url: 'https://8.8.8.8/image.png', address: '8.8.8.8' }, expect.any(AbortSignal));
     const request = JSON.parse(String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body));
@@ -162,14 +168,14 @@ describe('generateImage', () => {
   it('rejects a redirect from the result URL', async () => {
     const fetchImpl = vi.fn(async () => imageResponse({ data: [{ url: 'https://8.8.8.8/a' }] }));
     const downloadPinnedResult = vi.fn(async () => new Response(null, { status: 302, headers: { location: 'https://8.8.8.8/b' } }));
-    await expect(generateImage('Draw', { ...baseConfig, fetchImpl }, { downloadPinnedResult }))
+    await expect(generateImageWithTestDependencies('Draw', { ...baseConfig, fetchImpl }, { downloadPinnedResult }))
       .rejects.toMatchObject({ code: 'http', status: 302 });
   });
 
   it('rejects downloads larger than 20 MiB before reading the body', async () => {
     const fetchImpl = vi.fn(async () => imageResponse({ data: [{ url: 'https://8.8.8.8/a' }] }));
     const downloadPinnedResult = vi.fn(async () => new Response(png, { headers: { 'content-length': String(20 * 1024 * 1024 + 1) } }));
-    await expect(generateImage('Draw', { ...baseConfig, fetchImpl }, { downloadPinnedResult }))
+    await expect(generateImageWithTestDependencies('Draw', { ...baseConfig, fetchImpl }, { downloadPinnedResult }))
       .rejects.toMatchObject({ code: 'invalid_schema' });
   });
 
@@ -214,7 +220,7 @@ describe('generateImage', () => {
     const fetchImpl = vi.fn(async () => imageResponse({ data: [{ url: 'https://images.example/image.png' }] }));
     const downloadPinnedResult = vi.fn(async () => new Response(png));
     const resolveResultHost = vi.fn(async () => [{ address: '8.8.8.8', family: 4 }]);
-    const result = await generateImage('Draw', {
+    const result = await generateImageWithTestDependencies('Draw', {
       ...baseConfig, allowedResultHosts: ['images.example'], fetchImpl: fetchImpl as typeof fetch
     }, { resolveResultHost: resolveResultHost as never, downloadPinnedResult });
     expect(result.bytes).toEqual(png);
@@ -224,7 +230,7 @@ describe('generateImage', () => {
       url: 'https://images.example/image.png', address: '8.8.8.8', servername: 'images.example'
     }, expect.any(AbortSignal));
 
-    await expect(generateImage('Draw', {
+    await expect(generateImageWithTestDependencies('Draw', {
       ...baseConfig, allowedResultHosts: ['images.example'],
       fetchImpl: async () => imageResponse({ data: [{ url: 'https://images.example/image.png' }] })
     }, { resolveResultHost: async () => [{ address: '10.0.0.2', family: 4 }] as never }))
@@ -233,10 +239,10 @@ describe('generateImage', () => {
 
   it('rejects empty or failed DNS resolution for an allowlisted result host', async () => {
     const fetchImpl = async () => imageResponse({ data: [{ url: 'https://images.example/image.png' }] });
-    await expect(generateImage('Draw', {
+    await expect(generateImageWithTestDependencies('Draw', {
       ...baseConfig, allowedResultHosts: ['images.example'], fetchImpl
     }, { resolveResultHost: async () => [] as never })).rejects.toMatchObject({ code: 'invalid_schema' });
-    await expect(generateImage('Draw', {
+    await expect(generateImageWithTestDependencies('Draw', {
       ...baseConfig, allowedResultHosts: ['images.example'], fetchImpl
     }, { resolveResultHost: (async () => { throw new Error('DNS unavailable'); }) as never }))
       .rejects.toMatchObject({ code: 'network' });

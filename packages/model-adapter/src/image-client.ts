@@ -283,10 +283,12 @@ function validatePng(bytes: Uint8Array, requestId?: string): ImageResult {
   return { bytes, mimeType: 'image/png', width, height, ...(requestId ? { requestId } : {}) };
 }
 
-export async function generateImage(
+type ImageClientTestDependencies = { resolveResultHost?: typeof lookup; downloadPinnedResult?: PinnedResultDownload };
+
+async function generateImageInternal(
   prompt: string,
   config: ImageModelConfig,
-  dependencies: { resolveResultHost?: typeof lookup; downloadPinnedResult?: PinnedResultDownload } = {}
+  dependencies: ImageClientTestDependencies = {}
 ): Promise<ImageResult> {
   const url = endpoint(config);
   if (!prompt?.trim() || prompt.length > MAX_PROMPT_CHARS) invalid('Image prompt is required and must be at most 4000 characters');
@@ -319,4 +321,16 @@ export async function generateImage(
     bytes = await readLimited(downloaded, MAX_BYTES);
   }
   return validatePng(bytes, requestId);
+}
+
+export function generateImage(prompt: string, config: ImageModelConfig): Promise<ImageResult> {
+  return generateImageInternal(prompt, config);
+}
+
+export function generateImageWithTestDependencies(
+  prompt: string,
+  config: ImageModelConfig,
+  dependencies: ImageClientTestDependencies
+): Promise<ImageResult> {
+  return generateImageInternal(prompt, config, dependencies);
 }
