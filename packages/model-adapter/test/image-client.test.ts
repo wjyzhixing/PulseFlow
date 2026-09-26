@@ -1,14 +1,55 @@
 import { describe, expect, it, vi } from 'vitest';
+import { deflateSync } from 'node:zlib';
 import { generateImage } from '../src/image-client.js';
 import type { ImageModelConfig } from '../src/config.js';
 
-const png = (() => {
-  const bytes = new Uint8Array(33);
-  bytes.set([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82]);
-  new DataView(bytes.buffer).setUint32(16, 2);
-  new DataView(bytes.buffer).setUint32(20, 3);
+function crc32(bytes: Uint8Array): number {
+  let crc = 0xffffffff;
+  for (const byte of bytes) {
+    crc ^= byte;
+    for (let bit = 0; bit < 8; bit += 1) crc = (crc >>> 1) ^ ((crc & 1) ? 0xedb88320 : 0);
+  }
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function chunk(type: string, data: Uint8Array): Uint8Array {
+  const bytes = new Uint8Array(data.length + 12);
+  const view = new DataView(bytes.buffer);
+  view.setUint32(0, data.length);
+  bytes.set(new TextEncoder().encode(type), 4);
+  bytes.set(data, 8);
+  view.setUint32(bytes.length - 4, crc32(bytes.subarray(4, bytes.length - 4)));
   return bytes;
-})();
+}
+
+function makePng(width = 2, height = 3, compressed = deflateSync(new Uint8Array((width * 3 + 1) * height))): Uint8Array {
+  const ihdr = new Uint8Array(13);
+  const view = new DataView(ihdr.buffer);
+  view.setUint32(0, width);
+  view.setUint32(4, height);
+  ihdr.set([8, 2, 0, 0, 0], 8);
+  const parts = [Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), chunk('IHDR', ihdr), chunk('IDAT', compressed), chunk('IEND', new Uint8Array())];
+  const png = new Uint8Array(parts.reduce((sum, part) => sum + part.length, 0));
+  let offset = 0;
+  for (const part of parts) { png.set(part, offset); offset += part.length; }
+  return png;
+}
+
+function corruptChunkCrc(bytes: Uint8Array, chunkType: string): Uint8Array {
+  const corrupted = bytes.slice();
+  for (let offset = 8; offset + 12 <= corrupted.length;) {
+    const length = new DataView(corrupted.buffer).getUint32(offset);
+    const type = new TextDecoder().decode(corrupted.subarray(offset + 4, offset + 8));
+    if (type === chunkType) {
+      corrupted[offset + 8 + length] ^= 1;
+      return corrupted;
+    }
+    offset += 12 + length;
+  }
+  throw new Error(`Missing PNG ${chunkType} chunk`);
+}
+
+const png = makePng();
 const TEST_KEY = 'fixture-value';
 const baseConfig: ImageModelConfig = {
   baseUrl: 'https://model.example/v1', endpointUrl: 'https://model.example/custom/images',
@@ -30,13 +71,23 @@ describe('generateImage', () => {
   });
 
   it('downloads an allowlisted public URL without following redirects', async () => {
+    const resultUrl = 'https://images.example/image.png';
     const fetchImpl = vi.fn(async (url: string) => url === baseConfig.endpointUrl
-      ? imageResponse({ data: [{ url: 'https://8.8.8.8/image.png' }] })
+      ? imageResponse({ data: [{ url: resultUrl }] })
       : new Response(png, { headers: { 'content-type': 'image/png' } }));
-    const result = await generateImage('Draw', { ...baseConfig, fetchImpl: fetchImpl as typeof fetch });
+    const resolveImpl = vi.fn(async () => [{ address: '8.8.8.8', family: 4 as const }]);
+    const result = await generateImage('Draw', { ...baseConfig, allowedResultHosts: ['images.example'], fetchImpl: fetchImpl as typeof fetch }, { resolveResultHost: resolveImpl as never });
     expect(result.bytes).toEqual(png);
-    expect(fetchImpl.mock.calls[1][0]).toBe('https://8.8.8.8/image.png');
+    expect(fetchImpl.mock.calls[1][0]).toBe(resultUrl);
     expect((fetchImpl.mock.calls[1][1] as RequestInit).redirect).toBe('manual');
+    expect(fetchImpl.mock.calls[1][2]).toEqual({ address: '8.8.8.8', servername: 'images.example' });
+    expect(resolveImpl).toHaveBeenCalledWith('images.example', { all: true });
+  });
+
+  it.each(['', '   ', 'x'.repeat(4001)])('rejects empty or overlong image prompts', async (prompt) => {
+    const fetchImpl = vi.fn();
+    await expect(generateImage(prompt, { ...baseConfig, fetchImpl })).rejects.toMatchObject({ code: 'invalid_schema' });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 
   it('uses the native DashScope multimodal request and image response shape', async () => {
@@ -65,6 +116,29 @@ describe('generateImage', () => {
       .rejects.toMatchObject({ code: 'invalid_schema' });
   });
 
+  it.each([
+    (valid: Uint8Array) => valid.slice(0, -1),
+    (valid: Uint8Array) => { const bad = valid.slice(); bad[valid.length - 1] ^= 1; return bad; },
+    (valid: Uint8Array) => corruptChunkCrc(valid, 'IDAT'),
+    (valid: Uint8Array) => { const bad = valid.slice(); bad[valid.length - 5] = 1; return bad; },
+    () => makePng(2, 3, new Uint8Array([1, 2, 3])),
+    () => makePng(2, 3, Buffer.concat([deflateSync(new Uint8Array(21)), Buffer.from([0])]))
+  ])('rejects truncated or malformed PNG chunks and image data', async (mutate) => {
+    const invalidPng = mutate(png);
+    await expect(generateImage('Draw', {
+      ...baseConfig,
+      fetchImpl: async () => imageResponse({ data: [{ b64_json: Buffer.from(invalidPng).toString('base64') }] })
+    })).rejects.toMatchObject({ code: 'invalid_schema' });
+  });
+
+  it('rejects inflated image data that does not match the declared pixel bounds', async () => {
+    const oversizedData = makePng(2, 3, deflateSync(new Uint8Array(1024 * 1024)));
+    await expect(generateImage('Draw', {
+      ...baseConfig,
+      fetchImpl: async () => imageResponse({ data: [{ b64_json: Buffer.from(oversizedData).toString('base64') }] })
+    })).rejects.toMatchObject({ code: 'invalid_schema' });
+  });
+
   it.each(['http://127.0.0.1/a', 'https://169.254.1.1/a', 'https://9.9.9.9/a', 'file:///tmp/a'])(
     'rejects unsafe result URL %s before downloading', async (url) => {
       const fetchImpl = vi.fn(async () => imageResponse({ data: [{ url }] }));
@@ -88,9 +162,7 @@ describe('generateImage', () => {
   });
 
   it('rejects images over the pixel cap', async () => {
-    const huge = Uint8Array.from(png);
-    new DataView(huge.buffer).setUint32(16, 4096);
-    new DataView(huge.buffer).setUint32(20, 4096);
+    const huge = makePng(4096, 4096, deflateSync(new Uint8Array([0])));
     await expect(generateImage('Draw', { ...baseConfig, fetchImpl: async () => imageResponse({ data: [{ b64_json: Buffer.from(huge).toString('base64') }] }) }))
       .rejects.toMatchObject({ code: 'invalid_schema' });
   });
