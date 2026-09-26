@@ -6,3 +6,6 @@ export { ModelAdapterError } from './errors.js';
 export type { ModelAdapterErrorCode } from './errors.js';
 export { buildPrompt } from './prompt.js';
 export type { Prompt, T2uiInput } from './prompt.js';
+export { generateImage } from './image-client.js';
+export { loadImageModelConfig } from './config.js';
+export type { ImageModelConfig } from './config.js';
