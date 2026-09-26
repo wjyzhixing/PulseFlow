@@ -1,16 +1,21 @@
-import { validatePageDsl, type ComponentType, type PageDsl, type UiNode } from '@pulseflow/ui-dsl';
+import { getImageAsset, validatePageDsl, type ComponentType, type PageDsl, type UiNode } from '@pulseflow/ui-dsl';
 import { generateTypes } from './generate-types.js';
 import { generateEvents } from './generate-events.js';
 import { generateHeader } from './generate-header.js';
 import { generateRuntime } from './generate-runtime.js';
+import { PAGE_THEME_CSS } from './page-theme.js';
 
-export interface GeneratedFile { path: string; content: string }
+export interface GeneratedFile { path: string; content: string; encoding?: 'utf8' | 'base64' }
 
 function jsLiteral(value: unknown): string {
   return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
 interface BuildContext { declarations: string[]; nextId: number }
+
+function assetExtension(assetId: string): 'svg' | 'png' {
+  return getImageAsset(assetId) ? 'svg' : 'png';
+}
 
 const propDefaults: Record<ComponentType, string> = {
   Card: '{ title: undefined as string | undefined }',
@@ -22,8 +27,28 @@ const propDefaults: Record<ComponentType, string> = {
   Button: "{ variant: undefined as 'primary' | 'default' | 'dashed' | 'text' | 'link' | undefined, event: undefined as string | undefined }",
   Table: '{}', Row: '{ gutter: undefined as number | undefined }', Col: '{}',
   Tag: "{ color: undefined as 'default' | 'success' | 'warning' | 'error' | 'processing' | undefined }",
-  Badge: "{ status: undefined as 'default' | 'success' | 'warning' | 'error' | 'processing' | undefined }"
+  Badge: "{ status: undefined as 'default' | 'success' | 'warning' | 'error' | 'processing' | undefined }",
+  SiteNavigation: '{}', Hero: '{}', ContentSection: '{}', FeatureCard: '{}', MetricCard: '{}', CallToAction: '{}',
+  Image: "{ aspectRatio: undefined as '16:9' | '4:3' | '1:1' | 'auto' | undefined }"
 };
+
+function backgroundStyle(node: UiNode, context: BuildContext, id: string): string {
+  const assetId = node.props.backgroundAssetId;
+  if (typeof assetId !== 'string') return '';
+  const url = `${id}BackgroundUrl`;
+  const style = `${id}BackgroundStyle`;
+  const overlays: Record<string, string> = {
+    none: '',
+    light: 'linear-gradient(rgba(255,255,255,.45),rgba(255,255,255,.45)),',
+    dark: 'linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),'
+  };
+  const overlay = overlays[String(node.props.backgroundOverlay ?? 'none')];
+  context.declarations.push(
+    `const ${url} = new URL('./assets/${assetId}.${assetExtension(assetId)}', import.meta.url).href;`,
+    `const ${style} = { backgroundImage: ${jsLiteral(overlay)} + 'url(' + ${url} + ')', backgroundPosition: 'center', backgroundSize: 'cover' };`
+  );
+  return ` :style="${style}"`;
+}
 
 function buildNode(node: UiNode, context: BuildContext, fieldId?: string): string {
   const id = `n${context.nextId++}`;
@@ -46,7 +71,7 @@ function buildNode(node: UiNode, context: BuildContext, fieldId?: string): strin
     }
     case 'Select': {
       if (fieldId) context.declarations.push(`const ${id}Field = ${jsLiteral(fieldId)};`);
-      return `<a-select${conditional} :options="${id}.options.map(option => ({ ...option }))" :placeholder="${id}.placeholder"${fieldId ? ` :value="fieldValue(data, ${id}Field)"` : ''} />`;
+      return `<a-select${conditional} :options="${id}.options.map(option => ({ ...option }))" :placeholder="${id}.placeholder"${fieldId ? ` :value="selectValue(data, ${id}Field)"` : ''} />`;
     }
     case 'Button': return `<a-button${conditional} :type="${id}.variant ?? 'default'"${node.props.event ? ` @click="invokeEvent(handlers, ${id}.event)"` : ''}>{{ ${id}.label }}</a-button>`;
     case 'Table': {
@@ -59,14 +84,42 @@ function buildNode(node: UiNode, context: BuildContext, fieldId?: string): strin
     case 'Col': return `<a-col${conditional} :span="${id}.span">${children()}</a-col>`;
     case 'Tag': return `<a-tag${conditional} :color="${id}.color">{{ ${id}.text }}</a-tag>`;
     case 'Badge': return `<a-badge${conditional} :status="${id}.status" :text="${id}.text" />`;
+    case 'SiteNavigation': return `<nav${conditional} class="pf-site-nav" aria-label="Main navigation"><a class="pf-site-nav__brand" href="#top">{{ ${id}.brand }}</a><div class="pf-site-nav__links"><a v-for="link in ${id}.links" :key="link.sectionId" :href="'#' + link.sectionId">{{ link.label }}</a></div></nav>`;
+    case 'Hero': return `<header${conditional} id="top" class="pf-hero${typeof node.props.backgroundAssetId === 'string' ? ' pf-hero--image-background' : ''}"${backgroundStyle(node, context, id)}><p v-if="${id}.eyebrow" class="pf-hero__eyebrow">{{ ${id}.eyebrow }}</p><h1>{{ ${id}.title }}</h1><p class="pf-hero__subtitle">{{ ${id}.subtitle }}</p><div v-if="${id}.primaryLabel" class="pf-hero__actions"><a class="pf-button pf-button--primary" :href="'#' + ${id}.primarySectionId">{{ ${id}.primaryLabel }}</a><a v-if="${id}.secondaryLabel" class="pf-button" :href="'#' + ${id}.secondarySectionId">{{ ${id}.secondaryLabel }}</a></div></header>`;
+    case 'ContentSection': return `<section${conditional} :id="${id}.sectionId" class="pf-section" :class="'pf-section--' + ${id}.tone"${backgroundStyle(node, context, id)}><div class="pf-section__heading"><h2>{{ ${id}.title }}</h2><p v-if="${id}.description">{{ ${id}.description }}</p></div><div class="pf-section__content">${children()}</div></section>`;
+    case 'FeatureCard': return `<article${conditional} class="pf-feature-card"><span v-if="${id}.icon" class="pf-feature-card__icon" aria-hidden="true">{{ iconMarks[${id}.icon] }}</span><h3>{{ ${id}.title }}</h3><p>{{ ${id}.description }}</p></article>`;
+    case 'MetricCard': return `<article${conditional} class="pf-metric-card" :class="${id}.tone ? 'pf-metric-card--' + ${id}.tone : ''"><p class="pf-metric-card__label">{{ ${id}.label }}</p><p class="pf-metric-card__value">{{ ${id}.value }}</p><p v-if="${id}.trend" class="pf-metric-card__trend">{{ ${id}.trend }}</p></article>`;
+    case 'CallToAction': return `<section${conditional} class="pf-cta"><div class="pf-cta__copy"><h2>{{ ${id}.title }}</h2><p v-if="${id}.description">{{ ${id}.description }}</p></div><a class="pf-cta__action" :href="'#' + ${id}.targetSectionId">{{ ${id}.actionLabel }}</a></section>`;
+    case 'Image': {
+      const assetUrl = `${id}AssetUrl`;
+      const ratio = node.props.aspectRatio === 'auto' || !node.props.aspectRatio ? 'auto' : String(node.props.aspectRatio).replace(':', ' / ');
+      const assetId = String(node.props.assetId);
+      context.declarations.push(`const ${assetUrl} = new URL('./assets/${assetId}.${assetExtension(assetId)}', import.meta.url).href;`);
+      return `<img${conditional} class="pf-image" :src="${assetUrl}" :alt="${id}.alt" style="object-fit:${node.props.fit};aspect-ratio:${ratio}" />`;
+    }
   }
+}
+
+function referencedImageAssets(nodes: readonly UiNode[]): string[] {
+  const referenced = new Set<string>();
+  const visit = (node: UiNode) => {
+    for (const value of [node.type === 'Image' ? node.props.assetId : undefined, node.props.backgroundAssetId]) {
+      if (typeof value === 'string') referenced.add(value);
+    }
+    node.children.forEach(visit);
+    node.slots.forEach((slot) => { if ('children' in slot) slot.children.forEach(visit); });
+  };
+  nodes.forEach(visit);
+  return [...referenced].sort();
 }
 
 function generatedSfc(dsl: PageDsl): string {
   const context: BuildContext = { declarations: [], nextId: 0 };
   const markup = dsl.nodes.map((node) => buildNode(node, context)).join('\n');
-  return `<script setup lang="ts">\nimport { Card as ACard, Form as AForm, Input as AInput, Select as ASelect, Button as AButton, Table as ATable, Row as ARow, Col as ACol, Tag as ATag, Badge as ABadge } from 'ant-design-vue';\nimport PageHeader from './components/PageHeader.vue';\nimport { displayValue, fieldValue, matchesCondition, invokeEvent, bodyCellLabel, tableCellValue, tableColumns, tableRows } from './runtime';\nimport type { PageData } from './types';\nimport type { PageHandlers } from './events';\nconst { data = {}, handlers = {} } = defineProps<{ data?: PageData; handlers?: PageHandlers }>();\n${context.declarations.join('\n')}\n</script>\n<template>\n<section class="pulseflow-page" data-page-id="${dsl.pageId}">\n${markup}\n</section>\n</template>\n`;
+  const pageKind = dsl.pageKind ?? 'admin';
+  return `<script setup lang="ts">\nimport './page.css';\nimport { Card as ACard, Form as AForm, Input as AInput, Select as ASelect, Button as AButton, Table as ATable, Row as ARow, Col as ACol, Tag as ATag, Badge as ABadge } from 'ant-design-vue';\nimport PageHeader from './components/PageHeader.vue';\nimport { displayValue, fieldValue, selectValue, matchesCondition, invokeEvent, bodyCellLabel, tableCellValue, tableColumns, tableRows } from './runtime';\nimport type { PageData } from './types';\nimport type { PageHandlers } from './events';\nconst { data = {}, handlers = {} } = defineProps<{ data?: PageData; handlers?: PageHandlers }>();\nconst iconMarks: Record<string, string> = { analytics: '▥', workflow: '↗', security: '✓', people: '◎' };\n${context.declarations.join('\n')}\n</script>\n<template>\n<section class="pulseflow-page pulseflow-page--${pageKind}" data-page-kind="${pageKind}" data-page-id="${dsl.pageId}">\n${markup}\n</section>\n</template>\n`;
 }
+
 
 export function generatePage(value: unknown): GeneratedFile[] {
   const validated = validatePageDsl(value);
@@ -77,12 +130,21 @@ export function generatePage(value: unknown): GeneratedFile[] {
     { path: 'src/generated/types.ts', content: generateTypes(dsl) },
     { path: 'src/generated/events.ts', content: generateEvents(dsl) },
     { path: 'src/generated/runtime.ts', content: generateRuntime() },
-    { path: 'src/generated/components/PageHeader.vue', content: generateHeader() }
+    { path: 'src/generated/components/PageHeader.vue', content: generateHeader() },
+    { path: 'src/generated/page.css', content: PAGE_THEME_CSS }
   ];
-  const manifest = {
+  const assets = referencedImageAssets(dsl.nodes).flatMap((assetId) => {
+    const content = getImageAsset(assetId);
+    return content
+      ? [{ path: `src/generated/assets/${assetId}.svg`, content }]
+      : [{ path: `src/generated/assets/${assetId}.png`, content: '', encoding: 'base64' as const }];
+  });
+  files.push(...assets);
+  const manifest: Record<string, unknown> = {
     schemaVersion: 1, pageId: dsl.pageId, title: dsl.title, entry: files[0].path,
     framework: 'vue3', dependencies: { vue: '^3.5.18', 'ant-design-vue': '^4.2.6' },
     files: files.map((file) => file.path)
   };
+  manifest.pageKind = dsl.pageKind ?? 'admin';
   return [...files, { path: 'src/generated/manifest.json', content: `${JSON.stringify(manifest, null, 2)}\n` }];
 }

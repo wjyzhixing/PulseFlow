@@ -45,7 +45,7 @@ export interface ImageModelConfig {
   endpointUrl: string;
   model: string;
   apiKey: string;
-  mode: 'openai-images' | 'dashscope-native';
+  mode: 'openai-images' | 'dashscope-native' | 'openai-chat-completions' | 'volcengine-ark-images';
   timeoutMs: number;
   allowedResultHosts: readonly string[];
   fetchImpl?: typeof fetch;
@@ -54,10 +54,10 @@ export interface ImageModelConfig {
 function imageEndpoint(value: string): string {
   try {
     const url = new URL(value);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) throw new Error('Invalid URL');
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error('Invalid URL');
     return url.toString();
   } catch {
-    throw new ModelAdapterError('config', 'PULSEFLOW_IMAGE_API_URL must be an HTTP endpoint');
+    throw new ModelAdapterError('config', 'PULSEFLOW_IMAGE_API_URL must be an HTTPS endpoint without credentials, query, or fragment');
   }
 }
 
@@ -67,8 +67,8 @@ export function loadImageModelConfig(env: ModelEnvironment = process.env): Image
   if (!baseUrl) throw new ModelAdapterError('config', 'PULSEFLOW_MODEL_BASE_URL is required');
   if (!apiKey) throw new ModelAdapterError('config', 'PULSEFLOW_MODEL_API_KEY is required');
   const base = imageEndpoint(baseUrl);
-  const mode = env.PULSEFLOW_IMAGE_API_MODE?.trim() || 'openai-images';
-  if (mode !== 'openai-images' && mode !== 'dashscope-native') {
+  const mode = env.PULSEFLOW_IMAGE_API_MODE?.trim() || 'openai-chat-completions';
+  if (mode !== 'openai-images' && mode !== 'dashscope-native' && mode !== 'openai-chat-completions' && mode !== 'volcengine-ark-images') {
     throw new ModelAdapterError('config', 'PULSEFLOW_IMAGE_API_MODE is invalid');
   }
   const timeoutText = env.PULSEFLOW_IMAGE_TIMEOUT_MS?.trim();
@@ -76,12 +76,13 @@ export function loadImageModelConfig(env: ModelEnvironment = process.env): Image
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw new ModelAdapterError('config', 'PULSEFLOW_IMAGE_TIMEOUT_MS must be positive');
   }
-  const allowedResultHosts = (env.PULSEFLOW_IMAGE_RESULT_HOSTS ?? '').split(',').map((host) => host.trim().toLowerCase()).filter(Boolean);
+  const defaultResultHosts = mode === 'volcengine-ark-images' ? 'ark-acg-cn-beijing.tos-cn-beijing.volces.com' : '';
+  const allowedResultHosts = (env.PULSEFLOW_IMAGE_RESULT_HOSTS ?? defaultResultHosts).split(',').map((host) => host.trim().toLowerCase()).filter(Boolean);
   if (allowedResultHosts.some((host) => !/^[a-z0-9.-]+$/.test(host) || host.startsWith('.') || host.endsWith('.'))) {
     throw new ModelAdapterError('config', 'PULSEFLOW_IMAGE_RESULT_HOSTS is invalid');
   }
   return {
-    baseUrl, endpointUrl: imageEndpoint(env.PULSEFLOW_IMAGE_API_URL?.trim() || `${base.replace(/\/$/, '')}/images/generations`),
-    model: env.PULSEFLOW_IMAGE_MODEL_NAME?.trim() || 'qwen-image-2.0', apiKey, mode, timeoutMs, allowedResultHosts
+    baseUrl, endpointUrl: imageEndpoint(env.PULSEFLOW_IMAGE_API_URL?.trim() || `${base.replace(/\/$/, '')}/${mode === 'openai-chat-completions' ? 'chat/completions' : 'images/generations'}`),
+    model: env.PULSEFLOW_IMAGE_MODEL_NAME?.trim() || (mode === 'volcengine-ark-images' ? 'doubao-seedream-5.0-lite' : 'qwen-image-2.0'), apiKey, mode, timeoutMs, allowedResultHosts
   };
 }

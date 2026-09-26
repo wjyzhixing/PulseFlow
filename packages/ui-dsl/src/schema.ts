@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 export const identifierSchema = z.string().min(1).regex(/^[A-Za-z0-9_-]+$/);
+export const assetIdSchema = z.string().regex(/^asset-[A-Za-z0-9_-]+$/);
 export const safeTextSchema = z.string().min(1).refine(
   (value) => !/[<>]|javascript\s*:|\bon\w+\s*=/i.test(value),
   'Markup and executable text are unsupported'
@@ -29,5 +30,6 @@ export const pageDslSchema = z.strictObject({
   schemaVersion: z.literal(1),
   pageId: identifierSchema,
   title: safeTextSchema,
+  pageKind: z.enum(['website', 'admin']).optional(),
   nodes: z.array(z.unknown())
 });

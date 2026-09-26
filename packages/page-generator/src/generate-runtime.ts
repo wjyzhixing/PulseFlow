@@ -16,6 +16,11 @@ export function fieldValue(data: PageData, fieldId: string): unknown {
   return own(data, fieldId);
 }
 
+export function selectValue(data: PageData, fieldId: string): string | number | undefined {
+  const value = fieldValue(data, fieldId);
+  return typeof value === 'string' || typeof value === 'number' ? value : undefined;
+}
+
 export function matchesCondition(data: PageData, fieldId: string, equals: string | number | boolean): boolean {
   return fieldValue(data, fieldId) === equals;
 }

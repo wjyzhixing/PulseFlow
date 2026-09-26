@@ -5,8 +5,8 @@ import { createApiClient } from './api-client.js';
 import { checkConflicts, type Conflict } from './conflict-check.js';
 import { createUnifiedDiff } from './diff.js';
 import {
-  assertSafeRelativePath, isValidPageId, MANIFEST_PATH, parseLocalManifest, serializeManifest,
-  sha256, type PublishedBundle, type PulseFlowManifest
+  assertSafeRelativePath, isValidPageId, MANIFEST_PATH, parseLocalManifest, publishedFileBytes, publishedFileSha256, serializeManifest,
+  type PublishedBundle, type PublishedFile, type PulseFlowManifest
 } from './manifest.js';
 
 export interface PullOptions {
@@ -49,7 +49,10 @@ async function assertNoSymlinkParents(root: string, relativePath: string): Promi
   if (await exists(target) && (await lstat(target)).isSymbolicLink()) throw new Error(`Unsafe target path: ${relativePath}`);
 }
 
-export async function readManagedFiles(target: string, candidatePaths: string[] = []): Promise<Map<string, string>> {
+export async function readManagedFiles(
+  target: string,
+  candidateFiles: Array<string | Pick<PublishedFile, 'path' | 'encoding'>> = []
+): Promise<Map<string, string | Buffer>> {
   const manifestPath = join(target, MANIFEST_PATH);
   let manifest: PulseFlowManifest | null = null;
   try {
@@ -58,12 +61,17 @@ export async function readManagedFiles(target: string, candidatePaths: string[] 
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
   }
-  const files = new Map<string, string>();
-  const paths = new Set([...(manifest?.files ?? []).map((file) => file.path), ...candidatePaths]);
+  const files = new Map<string, string | Buffer>();
+  const candidates = new Map(candidateFiles.map((file) => typeof file === 'string' ? [file, undefined] : [file.path, file.encoding]));
+  const managed = new Map((manifest?.files ?? []).map((file) => [file.path, file]));
+  const paths = new Set([...managed.keys(), ...candidates.keys()]);
   for (const path of paths) {
     assertSafeRelativePath(path);
     await assertNoSymlinkParents(target, path);
-    try { files.set(path, await readFile(join(target, path), 'utf8')); } catch (error) {
+    try {
+      const encoding = managed.get(path)?.encoding ?? candidates.get(path);
+      files.set(path, encoding === 'base64' ? await readFile(join(target, path)) : await readFile(join(target, path), 'utf8'));
+    } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
     }
   }
@@ -82,10 +90,10 @@ export async function stageAndVerify(bundle: PublishedBundle): Promise<StagedBun
   try {
     for (const file of bundle.files) {
       assertSafeRelativePath(file.path);
-      if (sha256(file.content) !== file.sha256) throw new Error(`Checksum mismatch for ${file.path}`);
+      if (publishedFileSha256(file) !== file.sha256) throw new Error(`Checksum mismatch for ${file.path}`);
       const stagedPath = join(directory, file.path);
       await mkdir(dirname(stagedPath), { recursive: true });
-      await writeFile(stagedPath, file.content, { flag: 'wx' });
+      await writeFile(stagedPath, publishedFileBytes(file), { flag: 'wx' });
     }
     return { directory, bundle };
   } catch (error) {
@@ -94,7 +102,7 @@ export async function stageAndVerify(bundle: PublishedBundle): Promise<StagedBun
   }
 }
 
-async function writeAtomically(path: string, content: string): Promise<void> {
+async function writeAtomically(path: string, content: string | Uint8Array): Promise<void> {
   const temporary = `${path}.pulseflow-${process.pid}-${Math.random().toString(36).slice(2)}.tmp`;
   try {
     await writeFile(temporary, content, { flag: 'wx' });
@@ -102,7 +110,7 @@ async function writeAtomically(path: string, content: string): Promise<void> {
   } finally { await rm(temporary, { force: true }); }
 }
 
-type AtomicWriter = (path: string, content: string) => Promise<void>;
+type AtomicWriter = (path: string, content: string | Uint8Array) => Promise<void>;
 
 async function ensureParentDirectories(root: string, relativePath: string, created: string[]): Promise<void> {
   const segments = dirname(relativePath).split('/').filter(Boolean);
@@ -128,8 +136,8 @@ export async function applyStagedFilesAtomically(
   const rootExisted = await exists(root);
   await mkdir(root, { recursive: true });
   const generated = [
-    ...staged.bundle.files.map((file) => ({ path: file.path, content: file.content })),
-    { path: MANIFEST_PATH, content: serializeManifest(staged.bundle) }
+    ...staged.bundle.files.map((file) => ({ path: file.path, content: publishedFileBytes(file) })),
+    { path: MANIFEST_PATH, content: Buffer.from(serializeManifest(staged.bundle), 'utf8') }
   ];
   const backups = new Map<string, Buffer | null>();
   const completed: string[] = [];
@@ -149,7 +157,7 @@ export async function applyStagedFilesAtomically(
       for (const path of completed.reverse()) {
         const backup = backups.get(path);
         if (backup === null) await rm(path, { force: true });
-        else if (backup) await writeAtomically(path, backup.toString('utf8'));
+        else if (backup) await writeAtomically(path, backup);
       }
     } finally {
       for (const directory of createdDirectories.reverse()) {
@@ -187,7 +195,7 @@ export async function pullPublishedPage(options: PullOptions): Promise<PullResul
     if (previousManifest && previousManifest.pageId !== options.pageId) {
       throw new Error(`Target is managed by page ${previousManifest.pageId}`);
     }
-    const localFiles = await readManagedFiles(target, bundle.files.map((file) => file.path));
+    const localFiles = await readManagedFiles(target, bundle.files);
     const conflicts = checkConflicts(previousManifest, localFiles, bundle);
     if (conflicts.length) return { ok: false, message: 'Local changes conflict with the published page', conflicts, diff: createUnifiedDiff(conflicts) };
     await applyStagedFilesAtomically(staged, target);

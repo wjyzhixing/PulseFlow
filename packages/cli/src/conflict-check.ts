@@ -1,15 +1,18 @@
-import { sha256, type ManagedFile, type PublishedBundle, type PulseFlowManifest } from './manifest.js';
+import { publishedFileSha256, sha256, type ManagedFile, type PublishedBundle, type PulseFlowManifest } from './manifest.js';
 
 export interface Conflict {
   path: string;
   reason: 'locally-modified' | 'locally-deleted' | 'unmanaged-file-exists';
+  binary?: true;
+  localSha256?: string;
+  remoteSha256?: string;
 }
 
 const diffContent = new WeakMap<Conflict, { local: string | null; remote: string }>();
 
 export function checkConflicts(
   previousManifest: Pick<PulseFlowManifest, 'files'> | null,
-  localFiles: Map<string, string>,
+  localFiles: ReadonlyMap<string, string | Uint8Array>,
   remoteBundle: PublishedBundle
 ): Conflict[] {
   const previous = new Map<string, ManagedFile>((previousManifest?.files ?? []).map((file) => [file.path, file]));
@@ -21,8 +24,14 @@ export function checkConflicts(
       ? (localContent === undefined ? 'locally-deleted' : sha256(localContent) === old.sha256 ? null : 'locally-modified')
       : localContent === undefined ? null : 'unmanaged-file-exists';
     if (!reason) continue;
-    const conflict: Conflict = { path: remote.path, reason };
-    diffContent.set(conflict, { local: localContent ?? null, remote: remote.content });
+    const remoteSha256 = publishedFileSha256(remote);
+    const localSha256 = localContent === undefined ? undefined : sha256(localContent);
+    const binary = remote.encoding === 'base64' || old?.encoding === 'base64'
+      || (localContent !== undefined && typeof localContent !== 'string');
+    const conflict: Conflict = binary
+      ? { path: remote.path, reason, binary: true, ...(localSha256 === undefined ? {} : { localSha256 }), remoteSha256 }
+      : { path: remote.path, reason };
+    if (!binary) diffContent.set(conflict, { local: typeof localContent === 'string' ? localContent : null, remote: remote.content });
     conflicts.push(conflict);
   }
   return conflicts;

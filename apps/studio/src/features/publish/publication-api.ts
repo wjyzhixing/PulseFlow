@@ -1,7 +1,7 @@
 import { getToken } from '../auth/auth-store';
 import type { Diagnostic } from '@pulseflow/ui-dsl';
 
-export type GateId = 'dsl' | 'preview-compile' | 'typecheck' | 'template-build' | 'eslint';
+export type GateId = 'dsl' | 'preview-compile' | 'template-build';
 export interface GateResult { id: GateId; status: 'passed' | 'failed'; blocking: boolean; diagnostics: Diagnostic[] }
 export interface Publication { pageId: string; versionId: string; createdAt: string; manifest: Record<string, unknown>; files: Array<{ path: string; content: string }>; gates: GateResult[] }
 

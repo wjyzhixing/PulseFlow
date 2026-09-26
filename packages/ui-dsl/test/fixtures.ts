@@ -9,14 +9,23 @@ export const validPage: PageDsl = {
   schemaVersion: 1,
   pageId: 'dedicated-line_1',
   title: 'Dedicated line',
+  pageKind: 'admin',
   nodes: [
     { id: 'header', type: 'PageHeader', props: { title: 'Dedicated line', subtitle: 'Overview' }, children: [], slots: [
       { name: 'tags', children: [{ id: 'header-tag', type: 'Tag', props: { text: 'Live', color: 'success' }, children: [], slots: [] }] }
     ] },
-    { id: 'table', type: 'Table', props: { columns: [{ field: 'status-field', title: 'Status' }], dataSourceKey: 'records' }, children: [], slots: [
+    { id: 'metric-row', type: 'Row', props: { gutter: 16 }, children: [
+      { id: 'metric-col-one', type: 'Col', props: { span: 8 }, children: [{ id: 'metric-one', type: 'MetricCard', props: { label: 'Active', value: '128', trend: 'Up 12%', tone: 'success' }, children: [], slots: [] }], slots: [] },
+      { id: 'metric-col-two', type: 'Col', props: { span: 8 }, children: [{ id: 'metric-two', type: 'MetricCard', props: { label: 'Pending', value: '24', tone: 'warning' }, children: [], slots: [] }], slots: [] },
+      { id: 'metric-col-three', type: 'Col', props: { span: 8 }, children: [{ id: 'metric-three', type: 'MetricCard', props: { label: 'Completed', value: '96' }, children: [], slots: [] }], slots: [] }
+    ], slots: [] },
+    { id: 'table', type: 'Table', props: { columns: [{ field: 'status-field', title: 'Status' }, { field: 'phone-field', title: 'Phone' }], dataSourceKey: 'records' }, children: [], slots: [
       { name: 'bodyCell', field: 'status-field', cases: [{ equals: 'active', label: 'Active', color: 'success' }] }
     ] },
     { id: 'form', type: 'Form', props: { layout: 'vertical' }, slots: [], children: [
+      { id: 'status-item', type: 'FormItem', props: { fieldId: 'status-field', label: 'Status' }, slots: [], children: [
+        { id: 'status-select', type: 'Select', props: { options: [{ label: 'Active', value: 'active' }] }, children: [], slots: [] }
+      ] },
       { id: 'phone-item', type: 'FormItem', props: { fieldId: 'phone-field', label: 'Phone' }, slots: [], children: [
         { id: 'phone-input', type: 'Input', props: { placeholder: 'Enter phone', disabled: false }, children: [], slots: [] }
       ] }
@@ -32,3 +41,11 @@ export const validPage: PageDsl = {
     ] }
   ]
 };
+
+export const imageAssetNode = (id = 'image', assetId = 'asset-workflow') => ({
+  id,
+  type: 'Image' as const,
+  props: { assetId, alt: 'Generated product image', fit: 'cover' as const, aspectRatio: '16:9' as const },
+  children: [],
+  slots: []
+});

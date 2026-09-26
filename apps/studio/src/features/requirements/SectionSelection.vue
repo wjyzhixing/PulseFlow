@@ -45,8 +45,8 @@ function addManual() { if (!text.value.trim()) return; emit('add-manual', headin
 .input:hover { border-color: var(--pf-color-primary-hover); }
 .input:focus { border-color: var(--pf-color-primary); outline: 2px solid rgba(22, 119, 255, .16); outline-offset: 0; }
 .action-row { display: flex; justify-content: flex-end; margin-top: var(--pf-space-5); padding-top: var(--pf-space-4); border-top: var(--pf-border-width) solid var(--pf-color-border-secondary); }
-.btn { min-height: 36px; margin: 0; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid var(--pf-color-primary-strong); border-radius: var(--pf-radius); background: var(--pf-color-primary-strong); color: #fff; font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
-.btn:hover { border-color: var(--pf-color-primary-strong-hover); background: var(--pf-color-primary-strong-hover); color: #fff; }
+.btn { min-height: 36px; margin: 0; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid var(--pf-color-primary); border-radius: var(--pf-radius); background: var(--pf-color-primary); color: #fff; font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
+.btn:hover { border-color: var(--pf-color-primary-hover); background: var(--pf-color-primary-hover); color: #fff; }
 .btn.secondary { border-color: var(--pf-color-border); background: var(--pf-color-surface); color: var(--pf-color-text); }
 .btn.secondary:hover { border-color: var(--pf-color-primary-strong); background: var(--pf-color-surface); color: var(--pf-color-primary-strong); }
 .btn:focus-visible { outline: 2px solid var(--pf-color-primary); outline-offset: 2px; }

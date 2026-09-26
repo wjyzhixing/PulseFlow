@@ -1,9 +1,12 @@
 import { h, type VNode } from 'vue';
-import { validatePageDsl, type PageDsl, type UiNode } from '@pulseflow/ui-dsl';
+import { getImageAssetDataUrl, validatePageDsl, type PageDsl, type UiNode } from '@pulseflow/ui-dsl';
 import { componentRegistry } from './component-registry.js';
+import { PAGE_THEME_CSS } from './page-theme.js';
 
 export type PreviewData = Readonly<Record<string, unknown>>;
 export type EventHandlers = Readonly<Record<string, (() => void) | undefined>>;
+export type AssetUrls = ReadonlyMap<string, string>;
+
 
 export class DslRenderError extends Error {
   constructor(public readonly code: string, public readonly nodeId?: string) {
@@ -64,7 +67,34 @@ export function tableRows(data: PreviewData, dataSourceKey: string, columns: rea
   });
 }
 
-function checkedProps(node: UiNode): Record<string, unknown> {
+function resolveAssetUrl(assetId: unknown, assetUrls: AssetUrls): string | undefined {
+  if (typeof assetId !== 'string') return undefined;
+  const mappedUrl = assetUrls.get(assetId);
+  if (typeof mappedUrl === 'string' && /^blob:[^\s"'()<>]+$/.test(mappedUrl)) {
+    try {
+      if (new URL(mappedUrl).protocol === 'blob:') return mappedUrl;
+    } catch { /* Fall through to the trusted built-in asset lookup. */ }
+  }
+  return getImageAssetDataUrl(assetId);
+}
+
+function backgroundStyle(props: Record<string, unknown>, assetUrls: AssetUrls): Record<string, string> | undefined {
+  const assetUrl = resolveAssetUrl(props.backgroundAssetId, assetUrls);
+  if (!assetUrl) return undefined;
+  const overlays: Record<string, string> = {
+    none: '',
+    light: 'linear-gradient(rgba(255,255,255,.45),rgba(255,255,255,.45)),',
+    dark: 'linear-gradient(rgba(0,0,0,.45),rgba(0,0,0,.45)),'
+  };
+  const overlay = overlays[String(props.backgroundOverlay ?? 'none')];
+  return {
+    backgroundImage: `${overlay}url(${JSON.stringify(assetUrl)})`,
+    backgroundPosition: 'center',
+    backgroundSize: 'cover'
+  };
+}
+
+function checkedProps(node: UiNode, assetUrls: AssetUrls): Record<string, unknown> {
   const props = node.props;
   switch (node.type) {
     case 'Card': return { title: props.title };
@@ -79,19 +109,26 @@ function checkedProps(node: UiNode): Record<string, unknown> {
     case 'Col': return { span: props.span };
     case 'Tag': return { color: props.color };
     case 'Badge': return { status: props.status, text: props.text };
+    case 'SiteNavigation': return { brand: props.brand, links: props.links };
+    case 'Hero': return { eyebrow: props.eyebrow, title: props.title, subtitle: props.subtitle, primaryLabel: props.primaryLabel, primarySectionId: props.primarySectionId, secondaryLabel: props.secondaryLabel, secondarySectionId: props.secondarySectionId, class: typeof props.backgroundAssetId === 'string' ? 'pf-hero--image-background' : undefined, style: backgroundStyle(props, assetUrls) };
+    case 'ContentSection': return { sectionId: props.sectionId, title: props.title, description: props.description, tone: props.tone, style: backgroundStyle(props, assetUrls) };
+    case 'FeatureCard': return { title: props.title, description: props.description, icon: props.icon };
+    case 'MetricCard': return { label: props.label, value: props.value, trend: props.trend, tone: props.tone };
+    case 'CallToAction': return { title: props.title, description: props.description, actionLabel: props.actionLabel, targetSectionId: props.targetSectionId };
+    case 'Image': return { src: resolveAssetUrl(props.assetId, assetUrls), alt: props.alt, fit: props.fit, aspectRatio: props.aspectRatio ?? 'auto' };
   }
 }
 
-function renderNode(node: UiNode, data: PreviewData, handlers: EventHandlers, fieldId?: string): VNode | null {
+function renderNode(node: UiNode, data: PreviewData, handlers: EventHandlers, assetUrls: AssetUrls, fieldId?: string): VNode | null {
   if (node.condition && !matchesCondition(data, node.condition.fieldId, node.condition.equals)) return null;
   const component = Object.hasOwn(componentRegistry, node.type) ? componentRegistry[node.type] : undefined;
   if (!component) throw new DslRenderError('component.unsupported', node.id);
-  const props = checkedProps(node);
-  const children = () => node.children.map((child) => renderNode(child, data, handlers, node.type === 'FormItem' ? String(node.props.fieldId) : fieldId));
+  const props = checkedProps(node, assetUrls);
+  const children = () => node.children.map((child) => renderNode(child, data, handlers, assetUrls, node.type === 'FormItem' ? String(node.props.fieldId) : fieldId));
   const slots: Record<string, (...args: unknown[]) => unknown> = {};
   if (node.type === 'PageHeader') {
     const tags = node.slots.find((slot) => slot.name === 'tags');
-    if (tags?.name === 'tags') slots.tags = () => tags.children.map((child) => renderNode(child, data, handlers));
+    if (tags?.name === 'tags') slots.tags = () => tags.children.map((child) => renderNode(child, data, handlers, assetUrls));
   } else if (node.type === 'Table') {
     const key = String(node.props.dataSourceKey);
     const columns = node.props.columns as Array<{ field: string; title: string }>;
@@ -117,9 +154,13 @@ function renderNode(node: UiNode, data: PreviewData, handlers: EventHandlers, fi
   return h(component, { ...props, key: node.id }, slots);
 }
 
-export function renderPage(dsl: unknown, data: PreviewData = {}, handlers: EventHandlers = {}): VNode {
+export function renderPage(dsl: unknown, data: PreviewData = {}, handlers: EventHandlers = {}, assetUrls: AssetUrls = new Map()): VNode {
   const validated = validatePageDsl(dsl);
   if (!validated.ok) throw new DslRenderError(validated.diagnostics[0]?.code ?? 'schema.invalid');
   const page: PageDsl = validated.dsl;
-  return h('section', { class: 'pulseflow-preview', 'data-page-id': page.pageId }, page.nodes.map((node) => renderNode(node, data, handlers)));
+  const pageKind = page.pageKind ?? 'admin';
+  return h('section', { class: 'pulseflow-preview', 'data-page-id': page.pageId }, [
+    h('style', { 'data-pulseflow-preview-styles': '' }, PAGE_THEME_CSS),
+    h('section', { class: `pulseflow-page pulseflow-page--${pageKind}`, 'data-page-kind': pageKind }, page.nodes.map((node) => renderNode(node, data, handlers, assetUrls)))
+  ]);
 }

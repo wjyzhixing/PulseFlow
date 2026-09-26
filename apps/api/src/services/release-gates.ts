@@ -17,13 +17,13 @@ export interface PublishCandidate {
   generatedFiles: GeneratedFile[];
 }
 
-export type GateId = 'dsl' | 'preview-compile' | 'typecheck' | 'template-build' | 'eslint';
+export type GateId = 'dsl' | 'preview-compile' | 'template-build';
 export interface GateResult { id: GateId; status: 'passed' | 'failed'; blocking: boolean; diagnostics: Diagnostic[] }
 type GateRunner = (candidate: PublishCandidate) => Promise<GateResult>;
 export type GateOverrides = Partial<Record<Exclude<GateId, 'dsl'>, GateRunner>>;
 
 function result(id: GateId, diagnostics: Diagnostic[]): GateResult {
-  return { id, status: diagnostics.length ? 'failed' : 'passed', blocking: id !== 'eslint', diagnostics };
+  return { id, status: diagnostics.length ? 'failed' : 'passed', blocking: true, diagnostics };
 }
 
 function boundFields(nodes: readonly UiNode[], ids: Set<string>): void {
@@ -53,7 +53,23 @@ function dslGate(candidate: PublishCandidate): GateResult {
     }
   });
   const expected = generatePage(validated.dsl);
-  if (!Array.isArray(candidate.generatedFiles) || JSON.stringify(candidate.generatedFiles) !== JSON.stringify(expected)) {
+  const actualFiles = Array.isArray(candidate.generatedFiles) ? candidate.generatedFiles : [];
+  const actualByPath = new Map(actualFiles.map((file) => [file.path, file]));
+  const expectedPaths = new Set(expected.map((file) => file.path));
+  const generatedFilesMatch = actualFiles.length === expected.length && actualByPath.size === expected.length &&
+    [...expectedPaths].every((path) => {
+      const expectedFile = expected.find((file) => file.path === path);
+      const actualFile = actualByPath.get(path);
+      if (!expectedFile || !actualFile) return false;
+      if (path.endsWith('.png') && expectedFile.encoding === 'base64') {
+        if (actualFile.encoding !== 'base64' || !actualFile.content) return false;
+        if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(actualFile.content)) return false;
+        const bytes = Buffer.from(actualFile.content, 'base64');
+        return bytes.toString('base64') === actualFile.content && bytes.length > 0;
+      }
+      return actualFile.content === expectedFile.content && actualFile.encoding === expectedFile.encoding;
+    });
+  if (!generatedFilesMatch) {
     diagnostics.push({ code: 'files.mismatch', path: 'generatedFiles', message: 'Generated files must match the confirmed PageDsl' });
   }
   return result('dsl', diagnostics);
@@ -86,7 +102,7 @@ async function inCleanTemplate(candidate: PublishCandidate, executable: string, 
     for (const file of candidate.generatedFiles) {
       const target = join(directory, file.path);
       await mkdir(resolve(target, '..'), { recursive: true });
-      await writeFile(target, file.content);
+      await writeFile(target, file.encoding === 'base64' ? Buffer.from(file.content, 'base64') : file.content);
     }
     await execFileAsync(executable, args, { cwd: directory, timeout: 120_000, maxBuffer: 1024 * 1024 });
     return result(id, []);
@@ -104,20 +120,16 @@ function templateExecutable(name: string): string {
 
 const defaultGates: Record<Exclude<GateId, 'dsl'>, GateRunner> = {
   'preview-compile': previewCompile,
-  typecheck: (candidate) => inCleanTemplate(candidate, templateExecutable('vue-tsc'), ['--noEmit', '-p', 'tsconfig.json'], 'typecheck'),
-  'template-build': (candidate) => inCleanTemplate(candidate, templateExecutable('vite'), ['build'], 'template-build'),
-  eslint: (candidate) => inCleanTemplate(candidate, resolve(workspaceDir.pathname, 'node_modules', '.bin', 'eslint'), ['src/generated', '--ext', '.ts'], 'eslint')
+  'template-build': (candidate) => inCleanTemplate(candidate, templateExecutable('vite'), ['build'], 'template-build')
 };
 
 export async function runReleaseGates(candidate: PublishCandidate, overrides: GateOverrides = {}): Promise<GateResult[]> {
   const results = [dslGate(candidate)];
   if (results[0]?.status === 'failed') return results;
-  for (const id of ['preview-compile', 'typecheck', 'template-build'] as const) {
+  for (const id of ['preview-compile', 'template-build'] as const) {
     const gate = await (overrides[id] ?? defaultGates[id])(candidate);
     results.push({ ...gate, id, blocking: true });
     if (gate.status === 'failed') return results;
   }
-  const eslint = await (overrides.eslint ?? defaultGates.eslint)(candidate);
-  results.push({ ...eslint, id: 'eslint', blocking: false });
   return results;
 }

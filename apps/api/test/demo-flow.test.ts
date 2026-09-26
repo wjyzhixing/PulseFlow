@@ -8,12 +8,13 @@ import { buildApp } from '../src/app.js';
 import { validCandidate } from './fixtures/publish-candidates.js';
 
 const privateInput = 'Synthetic private requirement sentence used only by the demo flow test.';
-const allPassed = ['dsl', 'preview-compile', 'typecheck', 'template-build', 'eslint'].map((id) => ({
-  id: id as 'dsl' | 'preview-compile' | 'typecheck' | 'template-build' | 'eslint',
+const allPassed = ['dsl', 'preview-compile', 'template-build'].map((id) => ({
+  id: id as 'dsl' | 'preview-compile' | 'template-build',
   status: 'passed' as const,
-  blocking: id !== 'eslint',
+  blocking: true,
   diagnostics: []
 }));
+const generatedPage = validCandidate.pageDsl;
 
 function deterministicModel(): ModelConfig {
   return {
@@ -21,7 +22,7 @@ function deterministicModel(): ModelConfig {
     fetchImpl: async () => new Response(JSON.stringify({
       choices: [{ message: { content: JSON.stringify({
         entityFields: validCandidate.entityFields,
-        pageDsl: validCandidate.pageDsl,
+        pageDsl: generatedPage,
         semanticQuestions: validCandidate.semanticQuestions.map(({ id, question }) => ({ id, question }))
       }) } }]
     }), { status: 200, headers: { 'content-type': 'application/json' } })
@@ -47,7 +48,7 @@ describe('API demo flow', () => {
 
       const generated = await app.inject({ method: 'POST', url: '/api/drafts/generate', headers, payload: { sections } });
       expect(generated.statusCode).toBe(200);
-      expect(generated.json().data.pageDsl).toEqual(validCandidate.pageDsl);
+      expect(generated.json().data.pageDsl).toEqual(generatedPage);
 
       const initialDraft: Draft = {
         id: 'demo-draft', pageId: generated.json().data.pageDsl.pageId,
@@ -63,7 +64,7 @@ describe('API demo flow', () => {
 
       const published = await app.inject({ method: 'POST', url: '/api/publications', headers, payload: { draftId: initialDraft.id } });
       expect(published.statusCode).toBe(201);
-      expect(published.json().data.gates.filter((gate: { blocking: boolean }) => gate.blocking)).toHaveLength(4);
+      expect(published.json().data.gates.filter((gate: { blocking: boolean }) => gate.blocking)).toHaveLength(3);
       const latest = await app.inject({ method: 'GET', url: `/api/cli/pages/${initialDraft.pageId}/latest`, headers });
       expect(latest.statusCode).toBe(200);
       const generatedManifest = latest.json().data.files.find((file: { path: string }) => file.path === 'src/generated/manifest.json');

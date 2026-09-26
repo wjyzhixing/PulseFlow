@@ -3,3 +3,4 @@ export { renderPage, displayValue, fieldValue, matchesCondition, bodyCellLabel, 
 export type { PreviewData, EventHandlers } from './render-page.js';
 export { generatePage } from './generate-page.js';
 export type { GeneratedFile } from './generate-page.js';
+export { PAGE_THEME_CSS } from './page-theme.js';

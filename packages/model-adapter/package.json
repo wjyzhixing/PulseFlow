@@ -16,8 +16,9 @@
     "coverage": "vitest run --coverage --config ../../vitest.config.ts packages/model-adapter/test"
   },
   "dependencies": {
-    "@pulseflow/ui-dsl": "workspace:*",
     "@pulseflow/requirement-import": "workspace:*",
+    "@pulseflow/ui-dsl": "workspace:*",
+    "sharp": "^0.35.4",
     "zod": "^4.1.11"
   }
 }

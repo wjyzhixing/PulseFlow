@@ -2,7 +2,7 @@
 import { computed } from 'vue';
 import type { ReadonlyDesignNode, DesignEntityField } from './design-store';
 
-const props = defineProps<{ node: ReadonlyDesignNode | null; entityFields: readonly DesignEntityField[] }>();
+const props = defineProps<{ node: ReadonlyDesignNode | null; entityFields: readonly DesignEntityField[]; generatedAssetIds?: readonly string[] }>();
 const emit = defineEmits<{ update: [patch: Record<string, unknown>] }>();
 
 interface FieldSpec { key: string; label: string; kind?: 'text' | 'number' | 'boolean' | 'field' | 'select'; options?: readonly string[] }
@@ -16,10 +16,32 @@ const specsByType: Record<string, readonly FieldSpec[]> = {
   Button: [{ key: 'label', label: '按钮文字' }, { key: 'variant', label: '样式', kind: 'select', options: ['primary', 'default', 'dashed', 'text', 'link'] }, { key: 'event', label: '事件标识' }],
   Table: [{ key: 'dataSourceKey', label: '数据源标识' }], Row: [{ key: 'gutter', label: '栅格间距', kind: 'number' }],
   Col: [{ key: 'span', label: '栅格跨度', kind: 'number' }], Tag: [{ key: 'text', label: '标签文字' }, { key: 'color', label: '颜色', kind: 'select', options: ['default', 'success', 'warning', 'error', 'processing'] }],
-  Badge: [{ key: 'text', label: '状态文字' }, { key: 'status', label: '状态', kind: 'select', options: ['default', 'success', 'warning', 'error', 'processing'] }]
+  Badge: [{ key: 'text', label: '状态文字' }, { key: 'status', label: '状态', kind: 'select', options: ['default', 'success', 'warning', 'error', 'processing'] }],
+  SiteNavigation: [{ key: 'brand', label: '品牌名称' }],
+  Hero: [{ key: 'eyebrow', label: '眉题' }, { key: 'title', label: '主标题' }, { key: 'subtitle', label: '说明' }, { key: 'primaryLabel', label: '主按钮' }, { key: 'primarySectionId', label: '主按钮目标' }, { key: 'secondaryLabel', label: '次按钮' }, { key: 'secondarySectionId', label: '次按钮目标' }, { key: 'backgroundAssetId', label: '背景图片', kind: 'select' }, { key: 'backgroundOverlay', label: '背景遮罩', kind: 'select', options: ['none', 'light', 'dark'] }],
+  ContentSection: [{ key: 'sectionId', label: '区块标识' }, { key: 'title', label: '区块标题' }, { key: 'description', label: '区块说明' }, { key: 'tone', label: '区块样式', kind: 'select', options: ['default', 'muted', 'brand'] }, { key: 'backgroundAssetId', label: '背景图片', kind: 'select' }, { key: 'backgroundOverlay', label: '背景遮罩', kind: 'select', options: ['none', 'light', 'dark'] }],
+  FeatureCard: [{ key: 'title', label: '功能标题' }, { key: 'description', label: '功能说明' }, { key: 'icon', label: '图标类型', kind: 'select', options: ['analytics', 'workflow', 'security', 'people'] }],
+  MetricCard: [{ key: 'label', label: '指标名称' }, { key: 'value', label: '指标值' }, { key: 'trend', label: '变化说明' }, { key: 'tone', label: '指标状态', kind: 'select', options: ['default', 'success', 'warning'] }],
+  CallToAction: [{ key: 'title', label: '区块标题' }, { key: 'description', label: '区块说明' }, { key: 'actionLabel', label: '行动按钮' }, { key: 'targetSectionId', label: '按钮目标区块' }],
+  Image: [
+    { key: 'assetId', label: '图片素材', kind: 'select' },
+    { key: 'alt', label: '替代文本' },
+    { key: 'fit', label: '图片适配', kind: 'select', options: ['cover', 'contain'] },
+    { key: 'aspectRatio', label: '展示比例', kind: 'select', options: ['16:9', '4:3', '1:1', 'auto'] }
+  ]
 };
 const fields = computed(() => props.node ? specsByType[props.node.type] ?? [] : []);
+const assetOptions = computed(() => [...new Set([
+  'asset-workflow', 'asset-analytics', 'asset-collaboration',
+  ...(props.generatedAssetIds ?? []),
+  ...(typeof props.node?.props.assetId === 'string' ? [props.node.props.assetId] : []),
+  ...(typeof props.node?.props.backgroundAssetId === 'string' ? [props.node.props.backgroundAssetId] : [])
+])]);
 function updateText(key: string, event: Event) { emit('update', { [key]: (event.target as HTMLInputElement).value }); }
+function updateSelect(key: string, event: Event) {
+  const value = (event.target as HTMLSelectElement).value;
+  emit('update', key === 'backgroundAssetId' && !value ? { backgroundAssetId: undefined, backgroundOverlay: undefined } : { [key]: value });
+}
 function updateNumber(key: string, event: Event) { emit('update', { [key]: Number((event.target as HTMLInputElement).value) }); }
 function updateBoolean(key: string, event: Event) { emit('update', { [key]: (event.target as HTMLInputElement).checked }); }
 </script>
@@ -36,7 +58,7 @@ function updateBoolean(key: string, event: Event) { emit('update', { [key]: (eve
         <input v-else-if="field.kind === 'number'" type="number" :min="field.key === 'span' ? 1 : 0" :max="field.key === 'span' ? 24 : 48" :data-testid="`prop-${field.key}`" :value="Number(node.props[field.key] ?? 0)" @input="updateNumber(field.key, $event)">
         <input v-else-if="field.kind === 'boolean'" class="check" type="checkbox" :data-testid="`prop-${field.key}`" :checked="Boolean(node.props[field.key])" @change="updateBoolean(field.key, $event)">
         <select v-else-if="field.kind === 'field'" :data-testid="`prop-${field.key}`" :value="String(node.props[field.key] ?? '')" @change="updateText(field.key, $event)"><option v-for="item in entityFields" :key="item.id" :value="item.id">{{ item.label }}</option></select>
-        <select v-else :data-testid="`prop-${field.key}`" :value="String(node.props[field.key] ?? '')" @change="updateText(field.key, $event)"><option v-for="option in field.options" :key="option" :value="option">{{ option }}</option></select>
+        <select v-else :data-testid="`prop-${field.key}`" :value="String(node.props[field.key] ?? '')" @change="updateSelect(field.key, $event)"><option v-if="field.key === 'backgroundAssetId'" value="">无背景图片</option><option v-for="option in field.key === 'assetId' || field.key === 'backgroundAssetId' ? assetOptions : field.options" :key="option" :value="option">{{ option }}</option></select>
       </label>
       <p v-if="!fields.length" class="empty-copy">此节点没有常用可编辑属性。</p>
     </div>

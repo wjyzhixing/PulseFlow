@@ -91,7 +91,7 @@ describe('Studio workflow', () => {
     await wrapper.get('[data-testid="select-s1"]').setValue(true);
     await wrapper.get('[data-testid="generate-draft"]').trigger('click');
     await flushPromises();
-    expect(fetchMock).toHaveBeenCalledWith('/api/drafts/generate', expect.objectContaining({ body: JSON.stringify({ sections: [sections[0]] }), headers: expect.objectContaining({ Authorization: `Bearer ${testToken}` }) }));
+    expect(fetchMock).toHaveBeenCalledWith('/api/drafts/generate', expect.objectContaining({ body: JSON.stringify({ sections: [sections[0]], pageType: 'auto' }), headers: expect.objectContaining({ Authorization: `Bearer ${testToken}` }) }));
     expect(router.currentRoute.value.path).toBe('/draft');
     expect((wrapper.get('[data-testid="draft-fields"]').element as HTMLTextAreaElement).value).toContain('企业名称');
   });

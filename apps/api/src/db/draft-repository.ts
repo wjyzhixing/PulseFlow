@@ -27,6 +27,16 @@ export class DraftRepository {
     return row ? { id: row.id, pageId: row.pageId, pageDsl: JSON.parse(row.pageDslJson), entityFields: JSON.parse(row.entityFieldsJson), semanticQuestions: JSON.parse(row.semanticQuestionsJson), status: row.status } : null;
   }
 
+  getRevision(id: string): string | null {
+    const row = this.db.prepare('SELECT updatedAt FROM drafts WHERE id = ?').get(id) as { updatedAt: string } | undefined;
+    return row?.updatedAt ?? null;
+  }
+
+  getLatestByPageId(pageId: string): Draft | null {
+    const row = this.db.prepare('SELECT * FROM drafts WHERE pageId = ? ORDER BY updatedAt DESC LIMIT 1').get(pageId) as DraftRecord | undefined;
+    return row ? { id: row.id, pageId: row.pageId, pageDsl: JSON.parse(row.pageDslJson), entityFields: JSON.parse(row.entityFieldsJson), semanticQuestions: JSON.parse(row.semanticQuestionsJson), status: row.status } : null;
+  }
+
   create(draft: Draft): Draft {
     this.validate(draft);
     const stored = storedDraft(draft);

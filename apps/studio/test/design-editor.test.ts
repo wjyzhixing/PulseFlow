@@ -18,7 +18,7 @@ const monacoHarness = vi.hoisted(() => {
         getValue: () => value,
         setValue: (next: string) => { value = next; },
         onDidChangeModelContent: (next: () => void) => { listener = next; return { dispose: vi.fn() }; },
-        getModel: () => ({}),
+        getModel: () => ({ dispose: vi.fn() }),
         dispose: vi.fn(),
         layout: vi.fn()
       };
@@ -53,6 +53,10 @@ async function setup(path = '/design', draftResult: T2uiResult | 'blank' = resul
   await router.isReady();
   const wrapper = mount(App, { global: { plugins: [router] } });
   await flushPromises();
+  if (router.currentRoute.value.path === '/design') {
+    await wrapper.get('[data-dsl-toggle]').trigger('click');
+    await flushPromises();
+  }
   return { wrapper, router };
 }
 
@@ -93,8 +97,8 @@ describe('design editor', () => {
     const { wrapper } = await setup();
     await wrapper.get('[data-testid="palette-Button"]').trigger('click');
     const originalId = getDraftSession()!.id;
-    const gates = (['dsl', 'preview-compile', 'typecheck', 'template-build', 'eslint'] as const)
-      .map((id) => ({ id, status: 'passed', blocking: id !== 'eslint', diagnostics: [] }));
+    const gates = (['dsl', 'preview-compile', 'template-build'] as const)
+      .map((id) => ({ id, status: 'passed', blocking: true, diagnostics: [] }));
     const fetchMock = vi.fn().mockImplementation(async (path: string, options: RequestInit) => {
       if (path === '/api/drafts') return new Response(JSON.stringify({ ok: true, data: JSON.parse(String(options.body)) }), { status: 201 });
       return new Response(JSON.stringify({ ok: true, data: { pageId: 'orders', versionId: 'orders-v1', createdAt: '2026-09-25T00:00:00.000Z', manifest: {}, files: [], gates } }), { status: 201 });
@@ -117,8 +121,8 @@ describe('design editor', () => {
   it('keeps entity field edits when creating a draft from a published design', async () => {
     const { wrapper } = await setup();
     const originalId = getDraftSession()!.id;
-    const gates = (['dsl', 'preview-compile', 'typecheck', 'template-build', 'eslint'] as const)
-      .map((id) => ({ id, status: 'passed', blocking: id !== 'eslint', diagnostics: [] }));
+    const gates = (['dsl', 'preview-compile', 'template-build'] as const)
+      .map((id) => ({ id, status: 'passed', blocking: true, diagnostics: [] }));
     const fetchMock = vi.fn().mockImplementation(async (path: string, options: RequestInit) => {
       if (path === '/api/drafts') return new Response(JSON.stringify({ ok: true, data: JSON.parse(String(options.body)) }), { status: 201 });
       return new Response(JSON.stringify({ ok: true, data: { pageId: 'orders', versionId: 'orders-v1', createdAt: '2026-09-25T00:00:00.000Z', manifest: {}, files: [], gates } }), { status: 201 });
@@ -176,6 +180,187 @@ describe('design editor', () => {
     await wrapper.get('[data-testid="prop-title"]').setValue('核心客户');
     expect(wrapper.text()).toContain('核心客户');
     expect(monacoHarness.currentValue()).toContain('核心客户');
+  });
+
+  it('adds an image component with bundled asset choices and editable alt, fit and ratio', async () => {
+    const { wrapper } = await setup();
+    await wrapper.get('[data-testid="palette-Image"]').trigger('click');
+    expect(wrapper.get('[data-testid="prop-assetId"]').element.tagName).toBe('SELECT');
+    expect(wrapper.get('[data-testid="prop-assetId"]').findAll('option').map((option) => option.element.value)).toEqual([
+      'asset-workflow', 'asset-analytics', 'asset-collaboration'
+    ]);
+    await wrapper.get('[data-testid="prop-assetId"]').setValue('asset-collaboration');
+    await wrapper.get('[data-testid="prop-alt"]').setValue('客户服务团队');
+    await wrapper.get('[data-testid="prop-fit"]').setValue('contain');
+    await wrapper.get('[data-testid="prop-aspectRatio"]').setValue('4:3');
+    const saved = JSON.parse(getDraftSession()!.dslText) as { nodes: Array<{ type: string; props: Record<string, unknown> }> };
+    expect(saved.nodes).toContainEqual(expect.objectContaining({ type: 'Image', props: {
+      assetId: 'asset-collaboration', alt: '客户服务团队', fit: 'contain', aspectRatio: '4:3'
+    } }));
+  });
+
+  it('keeps page edits and shows image failure when generation fails', async () => {
+    const { wrapper } = await setup();
+    const candidate = { ...result, pageDsl: { ...result.pageDsl, title: '修订后的页面' }, intent: 'page_edit_and_image',
+      imagePlan: { prompt: '蓝色建筑', placement: 'inline' },
+      imageGeneration: { status: 'failed', error: { code: 'generation.image_timeout', message: '图片生成超时' } } };
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({ ok: true, data: candidate }))));
+    try {
+      await wrapper.get('#design-chat-input').setValue('修改标题并生成图片');
+      await wrapper.get('.design-chat__composer').trigger('submit');
+      await flushPromises();
+      expect(wrapper.get('h1').text()).toBe('修订后的页面');
+      expect(wrapper.get('[data-testid="image-review-status"]').text()).toContain('图片生成超时');
+      expect(JSON.parse(getDraftSession()!.dslText).title).toBe('修订后的页面');
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('waits for explicit placement choice before generating an image', async () => {
+    const { wrapper } = await setup();
+    const candidate = { ...result, intent: 'needs_confirmation', imagePlan: { prompt: '蓝色建筑', placement: 'inline' } };
+    const asset = { assetId: 'asset-generated', pageId: 'orders', mimeType: 'image/png', width: 2, height: 2 };
+    const fetchMock = vi.fn(async (path: string) => path === '/api/drafts/refine'
+      ? new Response(JSON.stringify({ ok: true, data: candidate }))
+      : path === '/api/drafts'
+        ? new Response(JSON.stringify({ ok: true, data: { id: getDraftSession()!.id } }), { status: 201 })
+        : path.startsWith('/api/drafts/')
+          ? new Response(JSON.stringify({ ok: true, data: {} }), { headers: { etag: '"server-revision"' } })
+          : path === '/api/assets/generate'
+            ? new Response(JSON.stringify({ ok: true, data: asset }), { status: 201 })
+            : new Response(Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]), { headers: { 'content-type': 'image/png' } }));
+    vi.stubGlobal('fetch', fetchMock);
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: vi.fn(() => 'blob:generated') });
+    Object.defineProperty(URL, 'revokeObjectURL', { configurable: true, value: vi.fn() });
+    try {
+      await wrapper.get('#design-chat-input').setValue('生成建筑图片');
+      await wrapper.get('.design-chat__composer').trigger('submit');
+      await flushPromises();
+      expect(wrapper.find('[data-testid="image-placement-question"]').exists()).toBe(true);
+      expect(fetchMock).toHaveBeenCalledTimes(1);
+      await wrapper.get('[data-image-action="apply-inline"]').trigger('click');
+      await flushPromises();
+      const generateCall = fetchMock.mock.calls.find(([path]) => path === '/api/assets/generate');
+      expect(generateCall).toBeDefined();
+      expect(JSON.parse(String((generateCall as unknown as [string, RequestInit])[1].body))).toMatchObject({
+        draftId: expect.any(String), expectedRevision: 'server-revision', imagePlan: { prompt: '蓝色建筑', placement: 'inline' }
+      });
+      expect(getDraftSession()!.dslText).toContain('asset-generated');
+      await wrapper.get('[data-testid="canvas-node-generated-image-1"]').trigger('click');
+      expect(wrapper.get('[data-testid="prop-assetId"]').findAll('option').map((option) => option.element.value)).toContain('asset-generated');
+      await wrapper.get('[data-image-action="remove"]').trigger('click');
+      expect(getDraftSession()!.dslText).not.toContain('asset-generated');
+    } finally { wrapper.unmount(); vi.unstubAllGlobals(); }
+  });
+
+  it('applies a valid conversation refinement to the current canvas and draft', async () => {
+    const { wrapper } = await setup();
+    expect(wrapper.find('.canvas-column .design-chat').exists()).toBe(true);
+    expect(wrapper.find('.design-meta').text()).toContain('管理平台');
+    const revised = { ...result, pageDsl: { ...result.pageDsl, title: '企业客户总览' } };
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, data: revised }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await wrapper.get('#design-chat-input').setValue('把页面标题改为企业客户总览');
+      await wrapper.get('.design-chat__composer').trigger('submit');
+      await flushPromises();
+
+      expect(fetchMock).toHaveBeenCalledWith('/api/drafts/refine', expect.objectContaining({
+        body: expect.stringContaining('把页面标题改为企业客户总览')
+      }));
+      expect(wrapper.text()).toContain('页面已更新');
+      expect(wrapper.get('h1').text()).toBe('企业客户总览');
+      expect(JSON.parse(getDraftSession()!.dslText).title).toBe('企业客户总览');
+      expect(wrapper.get('#design-chat-input').element).toHaveProperty('value', '');
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('uses the updated canvas as context for the next conversation turn', async () => {
+    const { wrapper } = await setup();
+    const messageBody = wrapper.get('.design-chat__body').element as HTMLDivElement;
+    Object.defineProperty(messageBody, 'scrollHeight', { configurable: true, value: 1_200 });
+    const firstTurn: T2uiResult = { ...result, pageDsl: { ...result.pageDsl, title: '企业客户总览' } };
+    const secondTurn: T2uiResult = { ...firstTurn, pageDsl: { ...firstTurn.pageDsl, title: '企业客户运营总览' } };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, data: firstTurn }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ok: true, data: secondTurn }), { status: 200 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await wrapper.get('#design-chat-input').setValue('把标题改为企业客户总览');
+      await wrapper.get('.design-chat__composer').trigger('submit');
+      await flushPromises();
+
+      await wrapper.get('#design-chat-input').setValue('再加上运营两个字');
+      await wrapper.get('.design-chat__composer').trigger('submit');
+      await flushPromises();
+
+      const secondRequest = JSON.parse(String(fetchMock.mock.calls[1]?.[1]?.body));
+      expect(secondRequest.pageDsl.title).toBe('企业客户总览');
+      expect(wrapper.get('h1').text()).toBe('企业客户运营总览');
+      expect(messageBody.scrollTop).toBe(1_200);
+      expect(JSON.parse(getDraftSession()!.dslText).title).toBe('企业客户运营总览');
+      expect(wrapper.findAll('.design-chat__message.is-user')).toHaveLength(2);
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('keeps a failed conversation instruction in the composer so it can be retried', async () => {
+    const { wrapper } = await setup();
+    const instruction = '把标题改为企业客户总览';
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      ok: false, error: { code: 'generation.timeout', message: '模型响应超时，请重试。' }
+    }), { status: 504 }));
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await wrapper.get('#design-chat-input').setValue(instruction);
+      await wrapper.get('.design-chat__composer').trigger('submit');
+      await flushPromises();
+
+      expect(wrapper.get('#design-chat-input').element).toHaveProperty('value', instruction);
+      expect(wrapper.text()).toContain('模型响应超时，请重试。');
+      expect(wrapper.get('.design-chat__composer-footer button').attributes('disabled')).toBeUndefined();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('disables the composer and ignores duplicate submissions while refinement is pending', async () => {
+    const { wrapper } = await setup();
+    let resolveRequest: (response: Response) => void = () => undefined;
+    const pendingResponse = new Promise<Response>((resolve) => { resolveRequest = resolve; });
+    const fetchMock = vi.fn(async () => pendingResponse);
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await wrapper.get('#design-chat-input').setValue('调整页面标题');
+      await wrapper.get('.design-chat__composer').trigger('submit');
+      await flushPromises();
+
+      expect(wrapper.get('#design-chat-input').attributes('disabled')).toBeDefined();
+      expect(wrapper.get('.design-chat__composer-footer button').attributes('disabled')).toBeDefined();
+      await wrapper.get('.design-chat__composer').trigger('submit');
+      expect(fetchMock).toHaveBeenCalledOnce();
+
+      resolveRequest(new Response(JSON.stringify({ ok: true, data: result }), { status: 200 }));
+      await flushPromises();
+      expect(wrapper.get('#design-chat-input').attributes('disabled')).toBeUndefined();
+    } finally { vi.unstubAllGlobals(); }
+  });
+
+  it('does not apply a conversation result after a manual edit changes the draft revision', async () => {
+    const { wrapper } = await setup();
+    let resolveRefinement: (response: Response) => void = () => undefined;
+    const pendingResponse = new Promise<Response>((resolve) => { resolveRefinement = resolve; });
+    const fetchMock = vi.fn(async () => pendingResponse);
+    vi.stubGlobal('fetch', fetchMock);
+    try {
+      await wrapper.get('#design-chat-input').setValue('调整页面标题');
+      await wrapper.get('.design-chat__composer').trigger('submit');
+      await flushPromises();
+      await wrapper.get('[data-testid="canvas-node-card"]').trigger('click');
+      await wrapper.get('[data-testid="prop-title"]').setValue('人工修改标题');
+      resolveRefinement(new Response(JSON.stringify({ ok: true, data: { ...result, pageDsl: { ...result.pageDsl, title: '过期模型标题' } } }), { status: 200 }));
+      await flushPromises();
+
+      expect(wrapper.get('h1').text()).toBe('订单工作台');
+      expect(wrapper.text()).toContain('没有覆盖当前画布');
+      expect(getDraftSession()!.dslText).toContain('人工修改标题');
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it('enters the protected design route from draft review', async () => {

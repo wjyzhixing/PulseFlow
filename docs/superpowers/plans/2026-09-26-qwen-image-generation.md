@@ -1,5 +1,7 @@
 # Qwen Image Generation Implementation Plan
 
+> Scope update: keep the bundled, reviewed SVG catalog (`asset-workflow`, `asset-analytics`, `asset-collaboration`) as optional built-in artwork and add the approved Qwen PNG generation flow alongside it. Dynamic `asset-*` IDs are valid only as opaque references; API asset lookup and ownership checks establish whether generated assets exist. Never accept provider URLs, data URLs, or arbitrary paths in the DSL.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Add intent-aware Qwen image generation to Studio design chat, let designers place or replace generated images, and carry validated local image files through preview, publication, and CLI export.
@@ -12,8 +14,8 @@
 
 - Image model name is `qwen-image-2.0`.
 - Reuse `PULSEFLOW_MODEL_BASE_URL` and `PULSEFLOW_MODEL_API_KEY` unless image-specific overrides are set.
-- Never send image requests to `/chat/completions`; use `PULSEFLOW_IMAGE_API_URL` and explicit `PULSEFLOW_IMAGE_API_MODE`.
-- Default image API URL is the existing model base URL plus `/images/generations`; default mode is `openai-images`. This is a compatibility default, not a verified TokenRhythm contract.
+- Send image requests through the explicit image adapter. Its TokenRhythm default uses `/chat/completions` with `openai-chat-completions`; retain `openai-images` and `dashscope-native` as explicit provider modes.
+- The user supplied the TokenRhythm request contract (Bearer auth and OpenAI-compatible `messages` body). Exact live image response compatibility remains unverified; parse only one explicitly marked image result and keep URL downloads restricted to configured hosts.
 - Image request timeout defaults to 120,000 ms; prompt is capped at 4,000 characters, response bytes at 20 MiB, decoded dimensions at 4,194,304 total pixels, and generation at one image per request.
 - Do not call the real image provider in tests or build verification.
 - Accept validated PNG resources only; DSL must not accept external URLs, data URLs, arbitrary file paths, or arbitrary CSS.
@@ -61,16 +63,16 @@
 - Test: `packages/model-adapter/test/config.test.ts`
 
 **Interfaces:**
-- `ImageModelConfig`: `{ baseUrl: string; endpointUrl: string; model: string; apiKey: string; mode: 'openai-images' | 'dashscope-native'; timeoutMs: number; fetchImpl?: typeof fetch }`.
+- `ImageModelConfig`: `{ baseUrl: string; endpointUrl: string; model: string; apiKey: string; mode: 'openai-images' | 'dashscope-native' | 'openai-chat-completions'; timeoutMs: number; fetchImpl?: typeof fetch }`.
 - `generateImage(prompt: string, config: ImageModelConfig): Promise<{ bytes: Uint8Array; mimeType: 'image/png'; width: number; height: number; requestId?: string }>`.
 - `ImageModelConfig` additionally carries `allowedResultHosts: readonly string[]` from `PULSEFLOW_IMAGE_RESULT_HOSTS`.
-- `loadImageModelConfig(env)` defaults model to `qwen-image-2.0`, endpoint to `${PULSEFLOW_MODEL_BASE_URL}/images/generations`, mode to `openai-images`, key to `PULSEFLOW_MODEL_API_KEY`, and timeout to `PULSEFLOW_IMAGE_TIMEOUT_MS` or 120,000 ms.
+- `loadImageModelConfig(env)` defaults model to `qwen-image-2.0`, endpoint to `${PULSEFLOW_MODEL_BASE_URL}/chat/completions`, mode to `openai-chat-completions`, key to `PULSEFLOW_MODEL_API_KEY`, and timeout to `PULSEFLOW_IMAGE_TIMEOUT_MS` or 120,000 ms.
 
-- [ ] **Step 1: Add failing adapter tests.** Cover exact URL, bearer header, model/prompt payload, base64 response, URL response, non-2xx response, malformed envelope, non-PNG bytes, timeout, and missing configuration. Inject `fetchImpl`; no test contacts an external service.
-- [ ] **Step 2: Run the focused tests and confirm the missing adapter/config fails.** Run `pnpm --filter @pulseflow/model-adapter test -- image-client.test.ts config.test.ts`.
-- [ ] **Step 3: Implement config and protocol-specific parsers.** The OpenAI Images adapter sends one image and accepts exactly one `b64_json` or `url`; the DashScope adapter sends the documented multimodal request and parses its documented image result. Do not retry through another mode.
-- [ ] **Step 4: Validate acquired bytes.** Restrict URL responses to HTTP(S) and hosts from `PULSEFLOW_IMAGE_RESULT_HOSTS`, resolve and reject private/loopback/link-local IPs, limit redirects to zero, cap response bytes at 20 MiB and decoded pixels at 4,194,304, verify PNG signature, and enforce the configured 120,000 ms default timeout.
-- [ ] **Step 5: Run focused tests and commit.** Run `pnpm --filter @pulseflow/model-adapter test -- image-client.test.ts config.test.ts`; commit as `feat: add qwen image model adapter`.
+- [x] **Step 1: Add failing adapter tests.** Cover exact URL, bearer header, model/prompt payload, base64 response, URL response, non-2xx response, malformed envelope, non-PNG bytes, timeout, and missing configuration. Inject `fetchImpl`; no test contacts an external service.
+- [x] **Step 2: Run the focused tests and confirm the missing adapter/config fails.** Run `pnpm --filter @pulseflow/model-adapter test -- image-client.test.ts config.test.ts`.
+- [x] **Step 3: Implement config and protocol-specific parsers.** The OpenAI Images adapter sends one image and accepts exactly one `b64_json` or `url`; the DashScope adapter sends the documented multimodal request; the Chat Completions adapter sends one user prompt and accepts exactly one clearly marked PNG data URI, Markdown URL, direct URL, or image content part. Do not retry through another mode. The precise TokenRhythm response shape remains unconfirmed.
+- [x] **Step 4: Validate acquired bytes.** Restrict URL responses to HTTPS and hosts from `PULSEFLOW_IMAGE_RESULT_HOSTS`, pin downloads to a screened public IP with TLS hostname validation, reject redirects, cap response bytes at 20 MiB and decoded pixels at 4,194,304, validate PNG chunks/CRC/zlib data, enforce a 4,000-character prompt limit, and use the configured 120,000 ms default timeout.
+- [x] **Step 5: Run focused tests and commit.** Focused image/config tests pass (45/45); model-adapter typecheck and diff check pass. Commits: `6a41eb4`, `e798d5c`, `5792796`, `1dbe82e`. Independent review: spec-compliant, no blocking findings.
 
 ### Task 2: Add controlled image assets to the DSL and page renderers
 
@@ -81,16 +83,15 @@
 - Modify: `packages/page-generator/test/render-page.test.ts` and `generate-page.test.ts`
 
 **Interfaces:**
-- `Image` props: `{ assetId: string; alt: string; fit: 'cover' | 'contain'; aspectRatio?: '16:9' | '4:3' | '1:1' | 'auto' }`.
-- `Hero` and `ContentSection` props add optional `backgroundAssetId` and a finite `backgroundOverlay` enum.
-- `renderPage(page, data, handlers, assetUrls)` receives a read-only map from asset ID to resolved blob URL.
-- Generated Vue output references `new URL('./assets/<assetId>.png', import.meta.url).href` for each validated static asset ID.
+- `Image` props: `{ assetId: string matching /^asset-[A-Za-z0-9_-]+$/; alt: string; fit: 'cover' | 'contain'; aspectRatio?: '16:9' | '4:3' | '1:1' | 'auto' }`; the bundled catalog IDs remain valid instances.
+- `Hero` and `ContentSection` props add optional catalog or generated `backgroundAssetId` and a finite `backgroundOverlay` enum.
+- `renderPage(page, data, handlers, assetUrls)` resolves generated assets only from a read-only ID-to-blob URL map, and falls back to trusted data URLs for bundled catalog SVGs.
+- Generated Vue output references `.svg` for bundled catalog assets and `new URL('./assets/<assetId>.png', import.meta.url).href` for generated assets. Task 5 supplies the referenced PNG bytes and includes them in the manifest.
 
-- [ ] **Step 1: Add failing schema tests.** Assert a valid image and background pass; invalid asset ID syntax, URL/data/path values, unknown overlay values, and extra properties fail.
-- [ ] **Step 2: Run DSL tests and confirm the new nodes/properties are rejected.** Run `pnpm --filter @pulseflow/ui-dsl test -- validate-page.test.ts`.
-- [ ] **Step 3: Implement strict schemas and renderer support.** Keep asset existence checks at the API boundary; DSL validates the opaque safe ID format and finite display options.
-- [ ] **Step 4: Add failing page-generator tests.** Assert `<img>` uses escaped alt text, background output uses only the static asset reference, both use identical fit/overlay values, and ordinary pages remain byte-for-byte deterministic.
-- [ ] **Step 5: Implement generated SFC and preview VNodes, then run focused tests.** Run `pnpm --filter @pulseflow/ui-dsl test -- validate-page.test.ts` and `pnpm --filter @pulseflow/page-generator test -- render-page.test.ts generate-page.test.ts`; commit as `feat: render controlled image assets`.
+- [x] **Step 1: Add schema tests.** Assert bundled and dynamic safe IDs and display properties pass; external URLs, data URLs, paths, malformed IDs, unsafe alt text, unapproved aspect ratios, overlays, and extra properties fail.
+- [x] **Step 2: Implement strict schemas and renderer support.** Validate opaque ID syntax; resolve dynamic preview assets only from blob URLs and preserve the trusted built-in SVG fallback.
+- [x] **Step 3: Cover page generation and preview.** Assert `<img>` and backgrounds use the same resolved asset and finite fit/overlay values; dynamic assets reference local PNGs, bundled assets export only when referenced, and ordinary pages remain deterministic.
+- [x] **Step 4: Complete generated SFC and preview VNodes, then run focused tests.** ui-dsl: 51 tests passed; page-generator: 24 passed; both typechecks and ui-dsl build pass. Independent review clean. Changes remain uncommitted because these files also contain pre-existing user-owned site/T2UI edits.
 
 ### Task 3: Persist PNG assets and orchestrate intent-aware refinement
 
@@ -108,12 +109,12 @@
 - Image metadata includes asset ID, page ID, optional draft ID, PNG MIME type, byte length, width, height, SHA-256, and created timestamp.
 - `POST /api/assets/generate` accepts `{ pageId: string; draftId?: string; imagePlan: { prompt: string; targetNodeId?: string; placement: 'inline' | 'background' } }` after Studio confirms an ambiguous image intent; `GET /api/assets/:assetId` returns authenticated PNG bytes.
 
-- [ ] **Step 1: Add failing API tests.** Test that page-only intent calls no image provider; clear image intent calls once; ambiguous intent returns `needs_confirmation` without calling it; combined intent applies page edits when image provider fails; invalid asset IDs and unauthenticated reads fail.
-- [ ] **Step 2: Run the focused API tests and confirm the missing behavior fails.** Run `pnpm --filter @pulseflow/api test -- drafts.test.ts assets.test.ts`.
-- [ ] **Step 3: Implement metadata schema/repository and atomic asset storage.** Write to a temporary file, fsync/close, rename within the configured asset directory, then insert metadata; if the metadata insert fails, remove the new file.
-- [ ] **Step 4: Extend model refinement with strict intent/image plan schema.** Preserve existing page DSL validation and page ID rules. The image plan may refer only to an existing node ID or the root insertion target; it cannot return URLs, paths, or CSS.
-- [ ] **Step 5: Add authenticated image generation and asset routes.** Inject image config/provider through `buildApp`; keep `POST /api/assets/generate` inside workspace-authenticated routes, limit it to three requests per client IP per minute and one image per request, verify the target node belongs to the submitted page, and validate asset ownership on reads. Image failure maps to a distinct API error while preserving the valid page edit result.
-- [ ] **Step 6: Run focused tests and commit.** Run `pnpm --filter @pulseflow/model-adapter test` and `pnpm --filter @pulseflow/api test -- drafts.test.ts assets.test.ts`; commit as `feat: orchestrate image generation for draft chat`.
+- [x] **Step 1: Add failing API tests.** Tests cover page-only intent, clear and ambiguous image intent, combined edits surviving image-provider failure, asset ownership, and authenticated reads.
+- [x] **Step 2: Run the focused API tests and confirm the missing behavior fails.** Implemented and verified with the API and model-adapter suites (60 API tests and 89 adapter tests pass).
+- [x] **Step 3: Implement metadata schema/repository and atomic asset storage.** Writes a validated PNG to a temporary file, syncs and renames it, inserts metadata, and removes the file if metadata persistence fails.
+- [x] **Step 4: Extend model refinement with strict intent/image plan schema.** Refinement validates intent, image plan, current page targets, and DSL; it rejects provider URLs, paths, and CSS.
+- [x] **Step 5: Add authenticated image generation and asset routes.** Image config/provider is injected through `buildApp`; generation is authenticated, rate-limited, target-checked, and ownership-checked. Image failure preserves a valid page edit.
+- [x] **Step 6: Run focused tests.** Model-adapter (89/89) and API (60/60) suites pass. No live provider was contacted.
 
 ### Task 4: Add designer review and authenticated Studio preview
 
@@ -127,11 +128,11 @@
 - `useImageAssets(assetIds, fetchImpl = fetch)` returns `{ urls: Readonly<Ref<Record<string, string>>>; error: Readonly<Ref<string>>; dispose(): void }`; requests use the existing Bearer token and revoke every object URL on replacement/unmount.
 - Chat UI consumes the refinement `intent`, progress state, `imagePlan`, and `generatedAssets`; a generated asset is not applied until the user selects an explicit placement when the target is ambiguous.
 
-- [ ] **Step 1: Add failing Studio tests.** Cover authenticated asset fetch, blob URL cleanup, image preview rendering, explicit ambiguous-intent choices, image failure preserving page edit, replace/remove behavior, and stale revision rejection.
-- [ ] **Step 2: Run focused Studio tests and confirm the behavior fails.** Run `pnpm --filter @pulseflow/studio test -- preview-panel.test.ts design-editor.test.ts`.
-- [ ] **Step 3: Implement asset composable and preview renderer wiring.** Fetch through the authenticated API client, create blob URLs, update on asset reference changes, and revoke all URLs on dispose.
-- [ ] **Step 4: Implement designer controls.** Show generation status, the notice “图片生成可能产生费用” with a link to the model catalog, preview, apply/replace/remove controls, and finite property selectors. Do not expose the upstream API key or accept arbitrary CSS.
-- [ ] **Step 5: Run focused tests and build Studio.** Run `pnpm --filter @pulseflow/studio test -- preview-panel.test.ts design-editor.test.ts` and `pnpm --filter @pulseflow/studio build`; commit as `feat: review generated images in Studio`.
+- [x] **Step 1: Add failing Studio tests.** Tests cover authenticated asset fetch, blob URL cleanup, preview rendering, ambiguous placement choices, error handling, replace/remove, and stale revisions.
+- [x] **Step 2: Run focused Studio tests and confirm the behavior fails.** Studio test suite passes (84/84).
+- [x] **Step 3: Implement asset composable and preview renderer wiring.** Uses the authenticated API, blob URLs, reactive updates, and cleanup on dispose/unmount.
+- [x] **Step 4: Implement designer controls.** Shows generation status, cost notice and model catalog link, preview, placement, apply/replace/regenerate/remove controls, with bounded DSL properties and no upstream key exposure.
+- [x] **Step 5: Run focused tests and build Studio.** Studio tests (84/84), typecheck, and workspace production build pass.
 
 ### Task 5: Publish binary assets and preserve them through CLI pull
 
@@ -146,11 +147,11 @@
 - Publication SHA-256 for text is UTF-8 bytes; publication SHA-256 for base64 files is the decoded bytes.
 - CLI conflict state stores raw `Buffer` content; text diff is generated only for UTF-8 files, while binary conflicts report local/remote hashes.
 
-- [ ] **Step 1: Add failing publication/CLI tests.** Cover only referenced assets published; base64 decoding; hash of decoded bytes; corruption rejection; binary path traversal rejection; binary conflict comparison; atomic replacement and restoration after a mid-write failure.
-- [ ] **Step 2: Run focused tests and confirm failures.** Run `pnpm --filter @pulseflow/api test -- publications.test.ts` and `pnpm --filter @pulseflow/cli test -- manifest.test.ts pull-command.test.ts`.
-- [ ] **Step 3: Include verified referenced PNGs in generated publication files.** Place binary assets under `src/generated/assets/<assetId>.png`, and keep manifest paths exact.
-- [ ] **Step 4: Make CLI content encoding-aware.** Validate base64 round trips, compute binary checksums over decoded bytes, stage raw bytes, compare existing files as buffers, and restore raw backup bytes during rollback.
-- [ ] **Step 5: Run focused tests and commit.** Run `pnpm --filter @pulseflow/api test -- publications.test.ts` and `pnpm --filter @pulseflow/cli test -- manifest.test.ts pull-command.test.ts`; commit as `feat: export generated images as binary assets`.
+- [x] **Step 1: Add failing publication/CLI tests.** Coverage includes referenced-only publication, decoded-byte hashing, invalid base64/path rejection, binary conflicts, exact file writes, and byte restoration after failed writes.
+- [x] **Step 2: Run focused tests and confirm failures.** API (60/60) and CLI (30/30) suites pass.
+- [x] **Step 3: Include verified referenced PNGs in generated publication files.** Referenced PNGs are included under `src/generated/assets/<assetId>.png`; orphaned assets are excluded.
+- [x] **Step 4: Make CLI content encoding-aware.** The CLI validates base64, hashes decoded bytes, stages/writes buffers, compares binary content, and restores binary backups on rollback.
+- [x] **Step 5: Run focused tests.** API (60/60), CLI (30/30), and workspace production build pass.
 
 ### Task 6: Document configuration and verify the end-to-end flow
 
@@ -158,16 +159,18 @@
 - Modify: `README.md` and `docs/superpowers/specs/2026-09-26-qwen-image-generation-design.md` only if implementation evidence changes the design.
 - Modify: `apps/api/test/demo-flow.test.ts` and Studio/API integration tests for the full mocked flow.
 
-- [ ] **Step 1: Add a failing demo-flow test.** Start with a mock text model returning combined intent and a mock image provider returning PNG bytes; assert the page has a registered asset reference and publish/CLI bundle contains that exact PNG hash.
-- [ ] **Step 2: Run `pnpm --filter @pulseflow/api test -- demo-flow.test.ts` and confirm it fails before integration.**
-- [ ] **Step 3: Complete the mocked flow.** Generate, refine, fetch preview asset, publish, pull into a temporary project, verify the local PNG bytes and ensure unrelated files remain unchanged.
-- [ ] **Step 4: Document image model settings, intent behavior, single-image default, cost indication, and that the gateway protocol is configurable and not yet verified from its public docs.** Do not include keys or examples containing secrets.
-- [ ] **Step 5: Run the relevant suite, coverage, and production builds.** Run `pnpm test`, `pnpm coverage`, and `pnpm build`; inspect the coverage report and maintain at least 80% project coverage. Do not add TypeScript or ESLint as release gates.
-- [ ] **Step 6: Review `git diff` for secrets and accidental unrelated edits, then commit the docs and integration test as `docs: explain image generation setup` / `test: cover qwen image flow` in separate commits.**
+- [x] **Step 1: Add a mocked image-flow integration test.** A fake text provider returns combined intent and an image provider returns PNG bytes; the test checks the registered asset and publication/CLI export hashes.
+- [x] **Step 2: Run the mocked API image-flow test.** `pnpm --filter @pulseflow/api test -- image-demo-flow.test.ts` passes as part of the API suite (60/60).
+- [x] **Step 3: Verify the mocked flow.** The integration test covers generation, refinement, publication, CLI bundle bytes, and orphan exclusion. CLI pull tests separately verify exact local binary writes and rollback.
+- [x] **Step 4: Document image model settings, intent behavior, one-image default, cost indication, and gateway protocol limitation.** README updated without secrets.
+- [x] **Step 5: Run relevant suites, coverage, and production builds.** `pnpm verify` passed: all seven package typechecks, 399 tests, every workspace coverage threshold (including API branches 80.14% and Studio branches 80.03%), and all production builds.
+- [x] **Step 6: Review `git diff` for secrets and accidental unrelated edits.** Secret-pattern scan found only test placeholders; independent review found no credential leakage or publication/CLI blocking issue. README now states that production endpoints should use HTTPS. The slot-target observation is not reachable through current refinement validation, which excludes Tag/Badge targets; slot support remains a future-proofing consideration. Other user changes share this worktree, so it was not staged or committed wholesale.
 
 ## External Gateway Acceptance
 
-Before claiming live TokenRhythm compatibility, configure the environment with the user's supplied image API format and run one explicit generation from Studio after showing that one image request may incur a charge. The public model listing's online status alone does not prove the default `/images/generations` URL or payload works. The user has said they can provide a request example; map that example to `ImageModelConfig` before the live acceptance step. Never print or commit the existing API key.
+Before claiming live TokenRhythm compatibility, run one explicit generation from Studio only after the user authorizes a potentially billable request. The user supplied an OpenAI-compatible Chat Completions request example for the image model. The successful image response shape is not documented or provided, so local mock compatibility does not prove the gateway returns one of the adapter's explicitly supported image forms. Never print or commit the existing API key.
+
+**Read-only verification on 2026-09-26:** the rendered [TokenRhythm API integration docs](https://tokenrhythm.studio/docs/api-integration) list `/v1/models`, `/v1/chat/completions`, `/v1/messages`, and `/v1/embeddings`, but no image-specific response contract. Earlier `GET /v1/models` returned 23 entries without `qwen-image-2.0`; this differs from the user's current configuration statement and may reflect account/model availability. No image-generation request was sent. The request schema is now based on the user's sample, while live acceptance remains pending a successful response sample or explicitly authorized generation.
 
 ## Completion Audit
 

@@ -1,10 +1,19 @@
 import { z } from 'zod';
-import { identifierSchema, safeTextSchema } from './schema.js';
+import { assetIdSchema, identifierSchema, safeTextSchema } from './schema.js';
 
 const safeText = safeTextSchema;
 const optionalText = safeText.optional();
 const colorSchema = z.enum(['default', 'success', 'warning', 'error', 'processing']);
 const badgeStatusSchema = z.enum(['default', 'success', 'warning', 'error', 'processing']);
+
+function requireAssetForVisibleOverlay(
+  value: { backgroundAssetId?: string; backgroundOverlay?: 'none' | 'light' | 'dark' },
+  context: z.RefinementCtx
+): void {
+  if (value.backgroundOverlay && value.backgroundOverlay !== 'none' && !value.backgroundAssetId) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ['backgroundAssetId'], message: 'Visible background overlay requires a background asset' });
+  }
+}
 
 export const componentProps = {
   Card: z.strictObject({ title: optionalText }),
@@ -18,7 +27,35 @@ export const componentProps = {
   Row: z.strictObject({ gutter: z.number().int().min(0).max(48).optional() }),
   Col: z.strictObject({ span: z.number().int().min(1).max(24) }),
   Tag: z.strictObject({ text: safeText, color: colorSchema.optional() }),
-  Badge: z.strictObject({ text: safeText, status: badgeStatusSchema.optional() })
+  Badge: z.strictObject({ text: safeText, status: badgeStatusSchema.optional() }),
+  Image: z.strictObject({
+    assetId: assetIdSchema,
+    alt: safeText,
+    fit: z.enum(['cover', 'contain']),
+    aspectRatio: z.enum(['16:9', '4:3', '1:1', 'auto']).optional()
+  }),
+  SiteNavigation: z.strictObject({
+    brand: safeText,
+    links: z.array(z.strictObject({ label: safeText, sectionId: identifierSchema }))
+  }),
+  Hero: z.strictObject({
+    eyebrow: optionalText, title: safeText, subtitle: safeText,
+    primaryLabel: optionalText, primarySectionId: identifierSchema.optional(),
+    secondaryLabel: optionalText, secondarySectionId: identifierSchema.optional(),
+    backgroundAssetId: assetIdSchema.optional(),
+    backgroundOverlay: z.enum(['none', 'light', 'dark']).optional()
+  }).superRefine((value, context) => {
+    if (Boolean(value.primaryLabel) !== Boolean(value.primarySectionId)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['primarySectionId'], message: 'Primary action label and section must be provided together' });
+    if (Boolean(value.secondaryLabel) !== Boolean(value.secondarySectionId)) context.addIssue({ code: z.ZodIssueCode.custom, path: ['secondarySectionId'], message: 'Secondary action label and section must be provided together' });
+    requireAssetForVisibleOverlay(value, context);
+  }),
+  ContentSection: z.strictObject({
+    sectionId: identifierSchema, title: safeText, description: optionalText, tone: z.enum(['default', 'muted', 'brand']),
+    backgroundAssetId: assetIdSchema.optional(), backgroundOverlay: z.enum(['none', 'light', 'dark']).optional()
+  }).superRefine(requireAssetForVisibleOverlay),
+  FeatureCard: z.strictObject({ title: safeText, description: safeText, icon: z.enum(['analytics', 'workflow', 'security', 'people']).optional() }),
+  MetricCard: z.strictObject({ label: safeText, value: safeText, trend: optionalText, tone: z.enum(['default', 'success', 'warning']).optional() }),
+  CallToAction: z.strictObject({ title: safeText, description: optionalText, actionLabel: safeText, targetSectionId: identifierSchema })
 } as const;
 
 export type ComponentType = keyof typeof componentProps;
@@ -27,7 +64,7 @@ export function isComponentType(value: string): value is ComponentType {
   return Object.hasOwn(componentProps, value);
 }
 
-export const containerComponents = new Set<ComponentType>(['Card', 'Form', 'FormItem', 'Row', 'Col']);
+export const containerComponents = new Set<ComponentType>(['Card', 'Form', 'FormItem', 'Row', 'Col', 'ContentSection']);
 
 export const tableBodyCellSchema = z.strictObject({
   name: z.literal('bodyCell'),

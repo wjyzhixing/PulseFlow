@@ -29,6 +29,10 @@ export interface DesignStore {
   removeNode(nodeId: string): boolean;
   moveNode(nodeId: string, parentId: string | null, index: number): boolean;
   updateNodeProps(nodeId: string, patch: Record<string, unknown>): boolean;
+  applyImageAsset(assetId: string, placement: 'inline' | 'background', targetNodeId?: string): boolean;
+  removeImageAsset(assetId: string): boolean;
+  replaceImageAsset(previousAssetId: string, nextAssetId: string): boolean;
+  replaceDraft(dsl: PageDsl, entityFields: readonly DesignEntityField[]): boolean;
   updateSourceBuffer(source: string): void;
   flushSourceBuffer(): JsonEditResult | null;
   applyJsonEdit(source: string): JsonEditResult;
@@ -36,15 +40,20 @@ export interface DesignStore {
 
 export const componentTypes = [
   'Card', 'PageHeader', 'Form', 'FormItem', 'Input', 'Select',
-  'Button', 'Table', 'Row', 'Col', 'Tag', 'Badge'
+  'Button', 'Table', 'Row', 'Col', 'Tag', 'Badge', 'SiteNavigation',
+  'Hero', 'ContentSection', 'FeatureCard', 'MetricCard', 'CallToAction', 'Image'
 ] as const satisfies readonly ComponentType[];
 
-export const containerTypes = new Set<ComponentType>(['Card', 'Form', 'FormItem', 'Row', 'Col']);
+export const containerTypes = new Set<ComponentType>(['Card', 'Form', 'FormItem', 'Row', 'Col', 'ContentSection']);
 
 const propKeys: Record<ComponentType, readonly string[]> = {
   Card: ['title'], PageHeader: ['title', 'subtitle'], Form: ['layout'], FormItem: ['fieldId', 'label'],
   Input: ['placeholder', 'disabled'], Select: ['options', 'placeholder'], Button: ['label', 'variant', 'event'],
-  Table: ['columns', 'dataSourceKey'], Row: ['gutter'], Col: ['span'], Tag: ['text', 'color'], Badge: ['text', 'status']
+  Table: ['columns', 'dataSourceKey'], Row: ['gutter'], Col: ['span'], Tag: ['text', 'color'], Badge: ['text', 'status'],
+  SiteNavigation: ['brand', 'links'], Hero: ['eyebrow', 'title', 'subtitle', 'primaryLabel', 'primarySectionId', 'secondaryLabel', 'secondarySectionId', 'backgroundAssetId', 'backgroundOverlay'],
+  ContentSection: ['sectionId', 'title', 'description', 'tone', 'backgroundAssetId', 'backgroundOverlay'], FeatureCard: ['title', 'description', 'icon'],
+  MetricCard: ['label', 'value', 'trend', 'tone'], CallToAction: ['title', 'description', 'actionLabel', 'targetSectionId'],
+  Image: ['assetId', 'alt', 'fit', 'aspectRatio']
 };
 
 function defaultProps(type: ComponentType, fields: readonly DesignEntityField[]): Record<string, unknown> {
@@ -54,7 +63,14 @@ function defaultProps(type: ComponentType, fields: readonly DesignEntityField[])
     FormItem: { fieldId: field, label: fields[0]?.label ?? '字段' }, Input: { placeholder: '请输入' },
     Select: { options: [], placeholder: '请选择' }, Button: { label: '按钮', variant: 'primary' },
     Table: { columns: [{ field, title: fields[0]?.label ?? '字段' }], dataSourceKey: 'records' },
-    Row: { gutter: 16 }, Col: { span: 12 }, Tag: { text: '标签', color: 'default' }, Badge: { text: '状态', status: 'default' }
+    Row: { gutter: 16 }, Col: { span: 12 }, Tag: { text: '标签', color: 'default' }, Badge: { text: '状态', status: 'default' },
+    SiteNavigation: { brand: 'PulseFlow', links: [] },
+    Hero: { eyebrow: '企业服务平台', title: '让业务协作更简单', subtitle: '以清晰的信息和可靠的流程，帮助团队专注重要工作。' },
+    ContentSection: { sectionId: 'overview', title: '核心能力', description: '围绕团队日常工作构建稳定、清晰的业务体验。', tone: 'default' },
+    FeatureCard: { title: '协同工作流', description: '让关键任务在团队之间顺畅流转。', icon: 'workflow' },
+    MetricCard: { label: '本月处理量', value: '1,280', trend: '较上月增长 12%', tone: 'default' },
+    CallToAction: { title: '开始与我们沟通', description: '了解适合团队的服务方案。', actionLabel: '预约咨询', targetSectionId: 'overview' },
+    Image: { assetId: 'asset-workflow', alt: '团队工作流示意图', fit: 'cover', aspectRatio: '16:9' }
   };
   return defaults[type];
 }
@@ -158,6 +174,7 @@ export function createDesignStore(options: {
   entityFields?: readonly DesignEntityField[];
   onDslChange?: (dsl: PageDsl, source: string) => void;
   onEntityFieldsChange?: (fields: readonly DesignEntityField[]) => void;
+  onDraftChange?: (dsl: PageDsl, source: string, fields: readonly DesignEntityField[]) => void;
 }): DesignStore {
   const initial = validatePageDsl(options.dsl, options.entityFields);
   if (!initial.ok) throw new Error(`Invalid initial PageDsl: ${initial.diagnostics.map((item) => item.path).join(', ')}`);
@@ -194,6 +211,22 @@ export function createDesignStore(options: {
     return true;
   }
 
+  function replaceDraft(candidateDsl: PageDsl, candidateFields: readonly DesignEntityField[]): boolean {
+    const copiedFields = candidateFields.map(cloneField);
+    const validated = validatePageDsl(candidateDsl, copiedFields);
+    if (!validated.ok) return false;
+    const canonicalSource = JSON.stringify(validated.dsl, null, 2);
+    fields.value = copiedFields;
+    currentDsl.value = validated.dsl;
+    source.value = canonicalSource;
+    diagnostics.value = [];
+    sourceDirty.value = false;
+    sourcePending.value = false;
+    selectedNodeId.value = null;
+    options.onDraftChange?.(validated.dsl, canonicalSource, copiedFields.map(cloneField));
+    return true;
+  }
+
   function addEntityField(): DesignEntityField {
     let suffix = 1;
     while (fields.value.some((field) => field.id === `field-${suffix}` || field.key === `field_${suffix}`)) suffix += 1;
@@ -222,7 +255,10 @@ export function createDesignStore(options: {
     const ids = collectIds(currentDsl.value.nodes);
     const base = type.replace(/([a-z])([A-Z])/g, '$1-$2').toLowerCase();
     let suffix = 1; while (ids.has(`${base}-${suffix}`)) suffix += 1;
-    const node: UiNode = { id: `${base}-${suffix}`, type, props: defaultProps(type, fields.value), children: [], slots: [] };
+    const props = type === 'ContentSection'
+      ? { ...defaultProps(type, fields.value), sectionId: `section-${suffix}` }
+      : defaultProps(type, fields.value);
+    const node: UiNode = { id: `${base}-${suffix}`, type, props, children: [], slots: [] };
     const nodes = insertNode(currentDsl.value.nodes, parentId, index, node);
     if (!nodes || !commit({ ...currentDsl.value, nodes })) return { ok: false };
     selectedNodeId.value = node.id;
@@ -259,6 +295,67 @@ export function createDesignStore(options: {
     return found && commit({ ...currentDsl.value, nodes });
   }
 
+  function applyImageAsset(assetId: string, placement: 'inline' | 'background', targetNodeId?: string): boolean {
+    flushSourceBuffer();
+    if (!/^asset-[A-Za-z0-9_-]+$/.test(assetId)) return false;
+    const target = targetNodeId ? findNode(currentDsl.value.nodes, targetNodeId) : null;
+    if (targetNodeId && !target) return false;
+    if (placement === 'background') {
+      if (!target || (target.type !== 'Hero' && target.type !== 'ContentSection')) return false;
+      const nodes = mapNodes(currentDsl.value.nodes, (node) => node.id === targetNodeId
+        ? { ...node, props: { ...node.props, backgroundAssetId: assetId, backgroundOverlay: node.props.backgroundOverlay ?? 'dark' } }
+        : node);
+      return commit({ ...currentDsl.value, nodes });
+    }
+    if (placement !== 'inline') return false;
+    if (target?.type === 'Image') return updateNodeProps(target.id, { assetId });
+    const ids = collectIds(currentDsl.value.nodes);
+    let suffix = 1;
+    while (ids.has(`generated-image-${suffix}`)) suffix += 1;
+    const image: UiNode = { id: `generated-image-${suffix}`, type: 'Image', props: { assetId, alt: '生成的图片', fit: 'cover', aspectRatio: '16:9' }, children: [], slots: [] };
+    if (target?.type === 'ContentSection') {
+      const nodes = mapNodes(currentDsl.value.nodes, (node) => node.id === target.id ? { ...node, children: [...node.children, image] } : node);
+      return commit({ ...currentDsl.value, nodes });
+    }
+    const nodes = [...currentDsl.value.nodes];
+    const targetIndex = target ? nodes.findIndex((node) => node.id === target.id) : nodes.findIndex((node) => node.type === 'Hero');
+    nodes.splice(targetIndex >= 0 ? targetIndex + 1 : nodes.length, 0, image);
+    return commit({ ...currentDsl.value, nodes });
+  }
+
+  function removeImageAsset(assetId: string): boolean {
+    flushSourceBuffer();
+    let changed = false;
+    const nodes = mapNodes(currentDsl.value.nodes, (node) => {
+      if (node.type === 'Image' && node.props.assetId === assetId) { changed = true; return null; }
+      if ((node.type === 'Hero' || node.type === 'ContentSection') && node.props.backgroundAssetId === assetId) {
+        changed = true;
+        const { backgroundAssetId: _asset, backgroundOverlay: _overlay, ...props } = node.props;
+        return { ...node, props };
+      }
+      return node;
+    });
+    return changed && commit({ ...currentDsl.value, nodes });
+  }
+
+  function replaceImageAsset(previousAssetId: string, nextAssetId: string): boolean {
+    flushSourceBuffer();
+    if (!/^asset-[A-Za-z0-9_-]+$/.test(nextAssetId)) return false;
+    let changed = false;
+    const nodes = mapNodes(currentDsl.value.nodes, (node) => {
+      if (node.type === 'Image' && node.props.assetId === previousAssetId) {
+        changed = true;
+        return { ...node, props: { ...node.props, assetId: nextAssetId } };
+      }
+      if ((node.type === 'Hero' || node.type === 'ContentSection') && node.props.backgroundAssetId === previousAssetId) {
+        changed = true;
+        return { ...node, props: { ...node.props, backgroundAssetId: nextAssetId } };
+      }
+      return node;
+    });
+    return changed && commit({ ...currentDsl.value, nodes });
+  }
+
   function applyJsonEdit(nextSource: string): JsonEditResult {
     source.value = nextSource;
     sourceDirty.value = true;
@@ -292,7 +389,7 @@ export function createDesignStore(options: {
     get entityFields() { return fields.value.map(cloneField); },
     addEntityField, updateEntityField, removeEntityField,
     selectNode(nodeId) { selectedNodeId.value = nodeId && findNode(currentDsl.value.nodes, nodeId) ? nodeId : null; },
-    addNode, removeNode, moveNode, updateNodeProps,
+    addNode, removeNode, moveNode, updateNodeProps, applyImageAsset, removeImageAsset, replaceImageAsset, replaceDraft,
     updateSourceBuffer(nextSource) { source.value = nextSource; sourceDirty.value = true; sourcePending.value = true; },
     flushSourceBuffer,
     applyJsonEdit

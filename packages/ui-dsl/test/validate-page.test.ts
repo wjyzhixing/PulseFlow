@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { validatePageDsl, type EntityField } from '../src/index.js';
+import { validatePageDsl, IMAGE_ASSET_IDS, type EntityField } from '../src/index.js';
 import { validFields, validPage } from './fixtures.js';
 
 const validate = (page: unknown) => validatePageDsl(page, validFields);
@@ -10,10 +10,63 @@ describe('validatePageDsl', () => {
     expect(validate(validPage)).toMatchObject({ ok: true, dsl: validPage, diagnostics: [] });
   });
 
+  it('accepts image assets and safe section backgrounds', () => {
+    const page = { ...validPage, nodes: [
+      node('hero', 'Hero', { title: 'Welcome', subtitle: 'A page', backgroundAssetId: 'asset-analytics', backgroundOverlay: 'dark' }),
+      node('section', 'ContentSection', { sectionId: 'details', title: 'Details', tone: 'default', backgroundAssetId: 'asset-collaboration', backgroundOverlay: 'light' }),
+      node('image', 'Image', { assetId: 'asset-workflow', alt: 'Product view', fit: 'contain', aspectRatio: '4:3' })
+    ] };
+    expect(validate(page)).toMatchObject({ ok: true });
+  });
+
+  it('accepts generated asset IDs alongside the built-in asset catalog', () => {
+    const page = { ...validPage, nodes: [...IMAGE_ASSET_IDS, 'asset-qwen_0123'].map((assetId, index) => node(`image-${index}`, 'Image', {
+      assetId, alt: 'Generated image', fit: 'cover'
+    })) };
+    expect(validate(page)).toMatchObject({ ok: true });
+  });
+
+  it.each(['Hero', 'ContentSection'] as const)('%s allows a no-overlay option without a background asset', (type) => {
+    const props = type === 'Hero'
+      ? { title: 'Welcome', subtitle: 'A page', backgroundOverlay: 'none' }
+      : { sectionId: 'details', title: 'Details', tone: 'default', backgroundOverlay: 'none' };
+    expect(validate({ ...validPage, nodes: [node('background', type, props)] }).ok).toBe(true);
+  });
+
+  it.each(['Hero', 'ContentSection'] as const)('%s requires an asset when a visible overlay is selected', (type) => {
+    const props = type === 'Hero'
+      ? { title: 'Welcome', subtitle: 'A page', backgroundOverlay: 'dark' }
+      : { sectionId: 'details', title: 'Details', tone: 'default', backgroundOverlay: 'light' };
+    const result = validate({ ...validPage, nodes: [node('background', type, props)] });
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ path: 'nodes[0].props.backgroundAssetId' }));
+  });
+
+  it.each([
+    ['URL asset ID', node('image', 'Image', { assetId: 'https://example.test/image.png', alt: 'Product', fit: 'cover' }), 'nodes[0].props.assetId'],
+    ['data URL asset ID', node('image', 'Image', { assetId: 'data:image/png;base64,AA==', alt: 'Product', fit: 'cover' }), 'nodes[0].props.assetId'],
+    ['path asset ID', node('image', 'Image', { assetId: '../image.png', alt: 'Product', fit: 'cover' }), 'nodes[0].props.assetId'],
+    ['asset ID missing required prefix', node('image', 'Image', { assetId: 'user-supplied', alt: 'Product', fit: 'cover' }), 'nodes[0].props.assetId'],
+    ['unsafe alternative text', node('image', 'Image', { assetId: 'asset-workflow', alt: '<img onerror=alert(1)>', fit: 'cover' }), 'nodes[0].props.alt'],
+    ['unknown aspect ratio', node('image', 'Image', { assetId: 'asset-workflow', alt: 'Product', fit: 'cover', aspectRatio: '2:1' }), 'nodes[0].props.aspectRatio'],
+    ['unknown overlay', node('section', 'ContentSection', { sectionId: 'details', title: 'Details', tone: 'default', backgroundOverlay: 'blur(12px)' }), 'nodes[0].props.backgroundOverlay'],
+    ['extra image property', { ...node('image', 'Image', { assetId: 'asset-workflow', alt: 'Product', fit: 'cover' }), props: { assetId: 'asset-workflow', alt: 'Product', fit: 'cover', style: 'color:red' } }, 'nodes[0].props.style']
+  ])('rejects unsafe image configuration: %s', (_case, badNode, path) => {
+    const result = validate({ ...validPage, nodes: [badNode] });
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ path }));
+  });
+
   it('validates structure without field context and checks references when an empty context is explicit', () => {
     expect(validatePageDsl(validPage)).toMatchObject({ ok: true, dsl: validPage });
     expect(validatePageDsl(validPage, []).diagnostics)
-      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'field.unbound', path: 'nodes[1].props.columns[0].field' })]));
+      .toEqual(expect.arrayContaining([
+        expect.objectContaining({ code: 'field.unbound', path: 'nodes[2].props.columns[0].field' }),
+        expect.objectContaining({ code: 'field.unbound', path: 'nodes[2].props.columns[1].field' }),
+        expect.objectContaining({ code: 'field.unbound', path: 'nodes[2].slots[0].field' }),
+        expect.objectContaining({ code: 'field.unbound', path: 'nodes[3].children[0].props.fieldId' }),
+        expect.objectContaining({ code: 'field.unbound', path: 'nodes[3].children[1].props.fieldId' })
+      ]));
   });
 
   it('rejects an unsupported component with stable code and path', () => {
@@ -160,5 +213,79 @@ describe('validatePageDsl', () => {
   ])('rejects invalid page metadata', (page, path) => {
     expect(validate(page).diagnostics)
       .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'schema.invalid', path })]));
+  });
+
+  it('reports malformed nodes, IDs, children, and unsupported node properties', () => {
+    const result = validate({ ...validPage, nodes: [null, { ...node('bad id', 'Tag', { text: 'State' }), onClick: 'run' }, { ...node('broken', 'Card', {}), children: null }] });
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'node.invalid', path: 'nodes[0]' }),
+      expect.objectContaining({ code: 'node.id.invalid', path: 'nodes[1].id' }),
+      expect.objectContaining({ code: 'node.property.unsupported', path: 'nodes[1].onClick' }),
+      expect.objectContaining({ code: 'node.children.invalid', path: 'nodes[2].children' })
+    ]));
+  });
+
+  it('rejects malformed and duplicate slots before accepting nested slot nodes', () => {
+    const header = { ...node('header', 'PageHeader', { title: 'Orders' }), slots: [
+      null,
+      { name: 'tags', extra: true, children: [] },
+      { name: 'tags', children: [null] }
+    ] };
+    const result = validate({ ...validPage, nodes: [header] });
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'slot.invalid', path: 'nodes[0].slots[0]' }),
+      expect.objectContaining({ code: 'slot.duplicate', path: 'nodes[0].slots[2].name' }),
+      expect.objectContaining({ code: 'slot.invalid', path: 'nodes[0].slots[1]' }),
+      expect.objectContaining({ code: 'slot.invalid', path: 'nodes[0].slots[2].children[0].type' })
+    ]));
+  });
+
+  it('rejects unresolved website section links and repeated section IDs', () => {
+    const result = validate({ ...validPage, nodes: [
+      node('navigation', 'SiteNavigation', { brand: 'Acme', links: [{ label: 'Services', sectionId: 'missing' }] }),
+      node('first', 'ContentSection', { sectionId: 'services', title: 'Services', tone: 'default' }),
+      node('second', 'ContentSection', { sectionId: 'services', title: 'More services', tone: 'brand' })
+    ] });
+    expect(result.diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'section.id.duplicate', path: 'nodes[2].props.sectionId' }),
+      expect.objectContaining({ code: 'section.unresolved', path: 'nodes[0].props.links[0].sectionId' })
+    ]));
+  });
+
+  it('validates conversion block props and requires its target section to exist', () => {
+    const conversion = node('conversion', 'CallToAction', {
+      title: '让业务协作更清晰', description: '与顾问沟通适合团队的方案。', actionLabel: '预约咨询', targetSectionId: 'contact'
+    });
+    const contact = node('contact', 'ContentSection', { sectionId: 'contact', title: '联系我们', tone: 'brand' });
+    expect(validate({ ...validPage, pageKind: 'website', nodes: [conversion, contact] }).ok).toBe(true);
+    const unresolved = validate({ ...validPage, pageKind: 'website', nodes: [
+      node('conversion', 'CallToAction', { title: '联系团队', actionLabel: '预约咨询', targetSectionId: 'missing' }), contact
+    ] });
+    expect(unresolved.diagnostics).toContainEqual(expect.objectContaining({ code: 'section.unresolved', path: 'nodes[0].props.targetSectionId' }));
+  });
+
+  it('rejects invalid field contexts and duplicate field identifiers', () => {
+    const duplicateFields: EntityField[] = [
+      { id: 'same', key: 'first', label: 'First', type: 'string', rules: [] },
+      { id: 'same', key: 'first', label: 'Second', type: 'string', rules: [] }
+    ];
+    expect(validatePageDsl(validPage, [{ id: 'invalid id', key: 'key', label: 'Label', type: 'string', rules: [] }]).diagnostics)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'field.invalid', path: 'entityFields[0].id' })]));
+    expect(validatePageDsl(validPage, duplicateFields).diagnostics).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: 'field.id.duplicate', path: 'entityFields[1].id' }),
+      expect.objectContaining({ code: 'field.key.duplicate', path: 'entityFields[1].key' })
+    ]));
+  });
+
+  it('rejects cyclic and excessively nested node graphs', () => {
+    const cyclic = node('cycle', 'Card', {});
+    cyclic.children = [cyclic];
+    expect(validate({ ...validPage, nodes: [cyclic] }).diagnostics)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'node.invalid', path: 'nodes[0].children[0]' })]));
+
+    let nested: ReturnType<typeof node> = node('n32', 'Card', {});
+    for (let depth = 32; depth >= 0; depth -= 1) nested = { ...node(`n${depth}`, 'Card', {}), children: [nested] };
+    expect(validate({ ...validPage, nodes: [nested] }).diagnostics)
+      .toEqual(expect.arrayContaining([expect.objectContaining({ code: 'node.invalid', path: expect.stringContaining('.children') })]));
   });
 });

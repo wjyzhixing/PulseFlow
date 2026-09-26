@@ -39,8 +39,8 @@ defineExpose({ resetFile });
 .file-hint { margin: var(--pf-space-1) 0 0; color: var(--pf-color-text-secondary); font-size: var(--pf-font-size-sm); }
 .error { margin: var(--pf-space-4) 0 0; padding: var(--pf-space-2) var(--pf-space-3); color: var(--pf-color-error-text); background: #fff2f0; border: var(--pf-border-width) solid #ffccc7; border-radius: var(--pf-radius); }
 .action-row { display: flex; justify-content: flex-end; margin-top: var(--pf-space-5); }
-.btn { min-height: 36px; margin: 0; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid var(--pf-color-primary-strong); border-radius: var(--pf-radius); background: var(--pf-color-primary-strong); color: #fff; font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
-.btn:hover { border-color: var(--pf-color-primary-strong-hover); background: var(--pf-color-primary-strong-hover); color: #fff; }
+.btn { min-height: 36px; margin: 0; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid var(--pf-color-primary); border-radius: var(--pf-radius); background: var(--pf-color-primary); color: #fff; font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
+.btn:hover { border-color: var(--pf-color-primary-hover); background: var(--pf-color-primary-hover); color: #fff; }
 .btn:focus-visible { outline: 2px solid var(--pf-color-primary); outline-offset: 2px; }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
 @media (max-width: 560px) { .source-card { padding: var(--pf-space-4); } .action-row .btn { width: 100%; } }

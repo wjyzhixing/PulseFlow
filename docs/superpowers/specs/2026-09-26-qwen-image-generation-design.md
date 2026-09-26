@@ -2,9 +2,9 @@
 
 ## 目标
 
-让 PulseFlow 在现有对话式页面生成和编辑流程中识别图片需求，按需调用 `qwen-image-2.0`，并允许设计人员在发布前查看、替换或移除图片。生成的图片可用于页面中的 `<img>` 和首屏/内容区背景，且在 Studio 预览、发布版本和 CLI 导出中保持一致。
+让 PulseFlow 在现有对话式页面生成和编辑流程中识别图片需求，并允许设计人员在发布前查看、替换或移除图片。首批支持 TokenRhythm 的 Chat Completions 图像响应与火山方舟 Seedream 图像生成，生成的图片可用于页面中的 `<img>` 和首屏/内容区背景，且在 Studio 预览、发布版本和 CLI 导出中保持一致。
 
-图片模型和文本模型使用同一 API Key 及网关基础地址。图片模型单独配置为 `qwen-image-2.0`，图片接口 URL 与协议模式可配置，避免将图片请求错误地发送到 `/chat/completions`。
+图片模型使用服务端单独的图像配置，默认仍兼容现有文本模型网关。火山方舟适配使用用户实测成功的 `volcengine-ark-images` 模式、Seedream 模型名和 `/api/plan/v3/images/generations` URL，以 Bearer API Key 调用并请求 `2K`、URL 响应、关闭水印。方舟返回签名 JPEG URL；服务端仅允许配置的火山对象存储主机，下载后校验和转换成 PNG，保持既有资产、预览、发布及 CLI 文件格式。
 
 ## 项目现状
 
@@ -12,7 +12,7 @@
 - `/api/drafts/refine` 接收完整 UI-DSL 并返回校验后的页面；Studio 通过 revision 检查防止迟到响应覆盖手工编辑。
 - UI-DSL 使用 Zod 白名单；页面生成器分别生成 Vue 页面文件和静态预览节点。
 - 发布版本以 JSON 保存生成文件；CLI 的文件内容和哈希按 UTF-8 文本处理，路径目前限定在 `src/generated/`。
-- Qwen 官方图像接口使用与 Chat Completions 不同的同步多模态接口。TokenRhythm 公开模型目录列出 `qwen-image-2.0` 在线，但公开接入文档没有给出图像调用路径；其模型能力信息也未宣称支持 OpenAI 对话协议。因此接口 URL、请求/响应适配器必须独立配置，不能仅从文本模型地址推断协议兼容。
+- Qwen 官方图像接口可能与 Chat Completions 不同；但用户提供的 TokenRhythm 调用样例明确指定统一基础地址和 `/chat/completions`，并说明图片请求只替换模型名。公开文档仍未描述成功生图响应结构，因此响应兼容性要与请求协议分开记录，且不能宣称已通过真实网关验证。
 - 现有设计规范排除了任意远程图片 URL、自定义 CSS 和脚本。本功能会扩展为仅允许服务端登记、校验并随版本交付的项目图片资源。
 
 ## 方案
@@ -29,11 +29,11 @@
 
 - 默认模型名为 `qwen-image-2.0`。
 - 默认复用现有 `PULSEFLOW_MODEL_BASE_URL` 和 `PULSEFLOW_MODEL_API_KEY`；允许通过图片专用环境变量覆盖完整接口 URL 和 API Key，方便兼容特定网关。
-- 图片协议使用明确的配置模式，例如 OpenAI Images 兼容模式或 DashScope 原生模式。不得自动猜测响应格式或回退到另一协议，以免掩盖网关配置错误或发出意料之外的请求。
+- 图片协议使用明确的配置模式，默认 `openai-chat-completions`，并保留 OpenAI Images 与 DashScope 原生模式。不得自动回退到另一请求协议；Chat Completions 模式只解析明确标记的图片结果，不把普通文本猜成图像。
 - 统一 provider 输出为 PNG 字节、媒体类型、宽高及请求追踪信息。支持供应商返回 base64 或临时下载 URL；URL 下载要限制协议、目标地址、跳转、超时、响应大小和图片格式，阻止 SSRF 与资源耗尽。
 - 超时、上游 HTTP 错误、响应格式错误和图片校验失败分别映射为可读错误；服务端日志保留脱敏后的状态和追踪 ID，不记录 API Key 或完整图片提示内容。
 
-图片接口字段使用 `PULSEFLOW_IMAGE_MODEL_NAME`、`PULSEFLOW_IMAGE_API_URL` 与 `PULSEFLOW_IMAGE_API_MODE`；模型名默认为 `qwen-image-2.0`，URL 默认为现有模型基础地址加 `/images/generations`，模式默认为 `openai-images`，未设置图片专用 API Key 时继承 `PULSEFLOW_MODEL_API_KEY`。若网关需要专用路径/协议，管理员可配置模式和完整 URL。默认只表示采用常见 OpenAI Images 请求格式，不代表 TokenRhythm 已公开保证兼容。README 说明模型目录有该模型并不等于公开 HTTP 协议已确认；正式连通性验收需在拥有该网关的环境里通过 Studio 显式操作完成。本地开发和自动化校验不调用真实计费接口。
+图片接口字段使用 `PULSEFLOW_IMAGE_MODEL_NAME`、`PULSEFLOW_IMAGE_API_URL`、`PULSEFLOW_IMAGE_API_MODE`、`PULSEFLOW_IMAGE_API_KEY` 和 `PULSEFLOW_IMAGE_RESULT_HOSTS`。通用模式默认 `qwen-image-2.0`、OpenAI Chat Completions 和文本 API Key。火山方舟模式使用 `doubao-seedream-5.0-lite`，请求 `size: 2K`、`response_format: url`、`watermark: false`；API URL 与结果主机有经实测确认的默认配置。TokenRhythm 请求仍使用 OpenAI Chat Completions；其响应解析只接受单张明确标记的 PNG data URI、Markdown 图片 URL、直接图片 URL 或标准 image content part。远程 URL 仍经域名白名单、安全 IP pinning 和大小限制下载。方舟返回的 JPEG 使用解码像素上限保护并在服务端转换为 PNG。实际方舟接口兼容性已通过用户指定的单次真实请求确认；自动化校验只使用 mock，不触发计费调用。
 
 ### 图片资源与 DSL
 
@@ -80,7 +80,7 @@ Studio API 的受保护图片读取接口返回登记资源。Studio 通过带 B
 
 ## 验收标准
 
-1. 普通布局或文案调整不调用图片模型；清晰的生图请求会使用 `qwen-image-2.0`；组合请求能同时得到页面修改和图片资源。
+1. 普通布局或文案调整不调用图片模型；清晰的生图请求按配置调用对应模型；组合请求能同时得到页面修改和图片资源。
 2. 不清楚是否要生图时，Studio 先询问，不产生上游图片调用。
 3. 生成资源可放入 `<img>` 或 Hero/内容区背景；设计人员可更换或移除，预览实时一致。
 4. DSL 拒绝任意 URL、路径、data URL、未知资源 ID 和任意 CSS。
@@ -99,8 +99,7 @@ Studio API 的受保护图片读取接口返回登记资源。Studio 通过带 B
 
 ## 接口文档依据与待确认事项
 
-- Qwen 官方图像生成文档：<https://help.aliyun.com/zh/model-studio/qwen-image-api>。`qwen-image-2.0` 支持同步图像生成，接口形状与文本 Chat Completions 不同。
-- TokenRhythm 公开模型目录：<https://tokenrhythm.studio/models>。目录列出 `qwen-image-2.0` 在线并标注按张计费。
-- TokenRhythm 公共 API 文档：<https://tokenrhythm.studio/docs/api-integration>。公开说明覆盖 OpenAI/Anthropic 对话和 embeddings；当前未找到该图像模型的 HTTP 调用路径/响应 schema。
+- 火山方舟接口实测：用户提供的 `https://ark.cn-beijing.volces.com/api/plan/v3/images/generations`、模型 `doubao-seedream-5.0-lite` 与 Seedream 请求体返回 HTTP 200；响应包含单张 JPEG URL、尺寸 `2048x2048` 和 `generated_images: 1`。
+- 火山方舟 API Key 仅存放在本地环境变量；本次联调凭证已在对话中暴露，使用前应在控制台轮换。
 
 因此实现必须将图片接口路径和协议适配独立于文本适配器，并在用户提供具体图像 API 格式或通过网关控制台验证后，才能宣称当前网关端到端已连通。开发验收只 mock 上游，不消耗用户额度。

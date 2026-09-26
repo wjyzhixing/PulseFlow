@@ -1,79 +1,35 @@
-# PulseFlow Phase 1
+# PulseFlow
 
-PulseFlow turns business requirements into a validated Vue 3 page draft. Studio supports requirement import, model generated UI-DSL, visual and JSON editing, live preview, release checks, and immutable publications. The CLI can pull a publication into a user's project and protects local edits from overwrite.
+PulseFlow 把业务需求转成可编辑的 Vue 3 页面草稿。设计人员可以在 Studio 中生成或手工搭建页面、通过对话修改设计、预览并发布；开发者再用 CLI 将不可变发布版本拉进消费方 Vue 项目。
 
-## Requirements
+页面由受控 UI-DSL 组件生成。图片可作为 `<img>` 或 Hero/内容区背景，并随发布和 CLI 导出。预览使用模拟业务数据，实际 API 和应用路由由消费方项目接入。
 
-- Node.js 22 or newer
-- pnpm 10.33.0 (`corepack enable` and `corepack prepare pnpm@10.33.0 --activate`)
-- A Chat Completions compatible model endpoint for manual Studio generation
+## 文档
 
-## Install and configure
+- [开发指南](develop.md)：架构、Mermaid 工作流、环境变量、开发命令、发布门禁和 CLI。
+- [中文使用指南](docs/中文使用指南.md)：Studio 操作、需求导入、页面发布与 CLI 使用。
+
+## 快速开始
+
+需要 Node.js 22+ 和 pnpm 10.33.0。复制 `.env.example` 为 `.env`，填写工作区令牌和模型服务配置，然后在启动终端执行 `set -a && source .env && set +a`。
 
 ```sh
 pnpm install
-cp .env.example .env
-```
-
-Replace every placeholder in `.env`. Do not commit a populated environment file. PulseFlow does not read `.env` automatically; export its values in your shell before starting the API:
-
-```sh
-set -a
-source .env
-set +a
-```
-
-`PULSEFLOW_WORKSPACE_TOKEN` protects Studio and API routes. `PULSEFLOW_DB_PATH` selects the SQLite database. Model variables configure the generation adapter:
-
-- `PULSEFLOW_MODEL_BASE_URL` is the service base URL, such as `https://model.example/v1`; PulseFlow appends `/chat/completions`.
-- `PULSEFLOW_MODEL_NAME` is sent as the completion `model`.
-- `PULSEFLOW_MODEL_API_KEY` is sent as a Bearer token to the model service.
-
-The endpoint must accept a Chat Completions request with `messages` and `response_format: { type: "json_object" }`, and return the generated draft in `choices[0].message.content`. Configure network access and credentials for the endpoint in the API environment only.
-
-## Start API and Studio
-
-In a terminal with the environment loaded, start the API:
-
-```sh
 pnpm --filter @pulseflow/api dev
 ```
 
-In another terminal, start Studio:
+另开一个终端加载同一份 `.env` 并运行 Studio：
 
 ```sh
 pnpm --filter @pulseflow/studio dev
 ```
 
-Open the Vite URL (usually `http://localhost:5173`) and enter the workspace token. Studio proxies `/api` to `http://localhost:3000`; set `PULSEFLOW_API_URL` for a different API address.
-
-## Pull a published page
-
-Build the CLI, then run it inside the destination project:
+本地类型检查、测试、覆盖率与构建：
 
 ```sh
-pnpm --filter @pulseflow/cli build
-PULSEFLOW_TOKEN="$PULSEFLOW_WORKSPACE_TOKEN" node /path/to/PulseFlow/packages/cli/dist/main.js pull dedicated-line_1 --base-url http://localhost:3000
+pnpm verify
 ```
 
-The command writes the generated page under `src/views/<pageId>/`, its view manifest, and `.pulseflow/manifest.json`. Add the printed route fragment to the consuming Vue Router configuration. The first pull works in an empty project directory. Later pulls compare local hashes with the prior manifest; if a managed file changed locally, the CLI prints a diff and leaves the file bytes untouched.
+## 项目状态
 
-## Deterministic demo and acceptance
-
-Run the deterministic end-to-end flow:
-
-```sh
-pnpm e2e
-```
-
-It starts an isolated API with a fake deterministic model response and temporary SQLite database, then drives Studio in a browser. The flow imports synthetic text, selects a section, generates a draft, answers its clarification question, edits UI-DSL in Monaco, reorders a canvas node, checks preview state, runs the four blocking release gates, and publishes. It then pulls into a clean temporary project and verifies a later conflict diff leaves a locally edited file hash unchanged. The fake model is only for repeatable automated tests; it does not replace an external model during manual use.
-
-For manual acceptance, use two genuine requirement documents supplied from outside this repository: the dedicated-line sample and an independent holdout sample. Upload each DOCX in Studio, select relevant sections, generate the page, make a design edit, preview it, publish it, and run the generated page through a clean-template build. Do not add those documents, their text, or reversible summaries to the repository, database, test fixtures, or logs; delete temporary copies after processing. Neither sample is present in the current workspace, so manual acceptance and holdout validation remain pending user-provided external files.
-
-## Phase 1 scope and limits
-
-- DOCX import and pasted-text parsing are supported; source text is parsed in memory and is not stored with drafts or publications.
-- Generated UI-DSL is constrained to the supported component registry. This is a page generation workflow, not a general purpose code generator.
-- Preview data and actions are local mocks. Connect real application data only in the consuming project.
-- CLI pull emits Vue page artifacts and a route fragment; it does not edit the consuming app's router or install dependencies.
-- The automated E2E uses synthetic requirements and a fake model. It does not claim that either genuine sample or the holdout has passed manual acceptance.
+通用 Qwen Chat Completions 生图模式和火山方舟 Seedream 图片模式都已接入。TokenRhythm 当前 Key 最近一次模型目录查询未列出 `qwen-image-2.0`，其真实图片响应仍待确认；详情见[开发指南](develop.md#图片提供方)。

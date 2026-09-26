@@ -1,13 +1,13 @@
 import { createServer, type Server } from 'node:http';
 import { createHash } from 'node:crypto';
-import { mkdtemp, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, readdir, rename, rm, unlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { applyStagedFilesAtomically, pullPublishedPage, stageAndVerify } from '../src/pull-command.js';
 
 const fileContent = '<template><section data-route="/orders">Orders</section></template>\n';
-const sha256 = (content: string): string => createHash('sha256').update(content).digest('hex');
+const sha256 = (content: string | Uint8Array): string => createHash('sha256').update(content).digest('hex');
 const generatedManifestContent = `${JSON.stringify({
   schemaVersion: 1,
   pageId: 'orders',
@@ -185,7 +185,7 @@ describe('pullPublishedPage', () => {
       ])
     });
     let writes = 0;
-    const atomicWriter = async (path: string, content: string): Promise<void> => {
+    const atomicWriter = async (path: string, content: string | Uint8Array): Promise<void> => {
       writes += 1;
       if (writes === 2) throw new Error('injected atomic write failure');
       const temporary = `${path}.test-tmp`;
@@ -196,6 +196,59 @@ describe('pullPublishedPage', () => {
     try {
       await expect(applyStagedFilesAtomically(staged, cwd, atomicWriter)).rejects.toThrow('injected atomic write failure');
       expect(await readdir(cwd)).toEqual([]);
+    } finally {
+      await rm(staged.directory, { recursive: true, force: true });
+    }
+  });
+
+  it('stages base64 files as raw bytes and writes the exact bytes to disk', async () => {
+    const cwd = await createTarget();
+    const imageBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x80]);
+    const staged = await stageAndVerify({
+      pageId: 'orders',
+      versionId: 'v1',
+      files: [{ path: 'src/views/orders/assets/photo.png', content: imageBytes.toString('base64'), encoding: 'base64', sha256: sha256(imageBytes) }]
+    });
+
+    try {
+      expect(await readFile(join(staged.directory, 'src/views/orders/assets/photo.png'))).toEqual(imageBytes);
+      await applyStagedFilesAtomically(staged, cwd);
+      expect(await readFile(join(cwd, 'src/views/orders/assets/photo.png'))).toEqual(imageBytes);
+      const localManifest = JSON.parse(await readFile(join(cwd, '.pulseflow/manifest.json'), 'utf8'));
+      expect(localManifest.files).toContainEqual({ path: 'src/views/orders/assets/photo.png', sha256: sha256(imageBytes), encoding: 'base64' });
+    } finally {
+      await rm(staged.directory, { recursive: true, force: true });
+    }
+  });
+
+  it('restores exact binary backups after a later atomic write fails', async () => {
+    const cwd = await createTarget();
+    const binaryPath = 'src/views/orders/assets/photo.png';
+    const originalBytes = Buffer.from([0x00, 0xff, 0x80, 0x41]);
+    const remoteBytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x01]);
+    await mkdir(join(cwd, 'src/views/orders/assets'), { recursive: true });
+    await writeFile(join(cwd, binaryPath), originalBytes);
+    const staged = await stageAndVerify({
+      pageId: 'orders',
+      versionId: 'v1',
+      files: [
+        { path: binaryPath, content: remoteBytes.toString('base64'), encoding: 'base64', sha256: sha256(remoteBytes) },
+        { path: 'src/views/orders/types.ts', content: 'export type Remote = string;\n', sha256: sha256('export type Remote = string;\n') }
+      ]
+    });
+    let writes = 0;
+    const atomicWriter = async (path: string, content: string | Uint8Array): Promise<void> => {
+      writes += 1;
+      if (writes === 2) throw new Error('injected atomic write failure');
+      const temporary = `${path}.test-tmp`;
+      await writeFile(temporary, content);
+      await rename(temporary, path);
+    };
+
+    try {
+      await expect(applyStagedFilesAtomically(staged, cwd, atomicWriter)).rejects.toThrow('injected atomic write failure');
+      expect(await readFile(join(cwd, binaryPath))).toEqual(originalBytes);
+      await expect(readFile(join(cwd, 'src/views/orders/types.ts'))).rejects.toMatchObject({ code: 'ENOENT' });
     } finally {
       await rm(staged.directory, { recursive: true, force: true });
     }

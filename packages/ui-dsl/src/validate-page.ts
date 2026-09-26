@@ -12,6 +12,8 @@ function isRecord(value: unknown): value is RecordValue {
 
 interface NodeContext {
   ids: Set<string>;
+  sectionIds: Set<string>;
+  sectionReferences: Array<{ sectionId: string; path: string }>;
   fields?: Map<string, EntityField>;
   diagnostics: Diagnostic[];
   seen: WeakSet<object>;
@@ -108,6 +110,29 @@ function validateNode(value: unknown, path: string, context: NodeContext, depth:
     typeof props.data.fieldId === 'string' && !context.fields.has(props.data.fieldId)) {
     context.diagnostics.push(diagnostic('field.unbound', `${path}.props.fieldId`, 'Unknown entity field'));
   }
+  if (type === 'ContentSection') {
+    const sectionProps = componentProps.ContentSection.safeParse(value.props);
+    if (sectionProps.success) {
+      const sectionId = sectionProps.data.sectionId;
+      if (context.sectionIds.has(sectionId)) context.diagnostics.push(diagnostic('section.id.duplicate', `${path}.props.sectionId`, `Duplicate section ID: ${sectionId}`));
+      context.sectionIds.add(sectionId);
+    }
+  }
+  if (type === 'SiteNavigation') {
+    const navigationProps = componentProps.SiteNavigation.safeParse(value.props);
+    if (navigationProps.success) navigationProps.data.links.forEach((link, index) => context.sectionReferences.push({ sectionId: link.sectionId, path: `${path}.props.links[${index}].sectionId` }));
+  }
+  if (type === 'Hero') {
+    const heroProps = componentProps.Hero.safeParse(value.props);
+    if (heroProps.success) {
+      if (heroProps.data.primarySectionId) context.sectionReferences.push({ sectionId: heroProps.data.primarySectionId, path: `${path}.props.primarySectionId` });
+      if (heroProps.data.secondarySectionId) context.sectionReferences.push({ sectionId: heroProps.data.secondarySectionId, path: `${path}.props.secondarySectionId` });
+    }
+  }
+  if (type === 'CallToAction') {
+    const actionProps = componentProps.CallToAction.safeParse(value.props);
+    if (actionProps.success) context.sectionReferences.push({ sectionId: actionProps.data.targetSectionId, path: `${path}.props.targetSectionId` });
+  }
 
   let tableColumns: Set<string> | undefined;
   if (type === 'Table' && props.success) {
@@ -173,7 +198,7 @@ export function validatePageDsl(value: unknown, entityFields?: readonly EntityFi
   if (fields && !fields.success) return { ok: false, diagnostics: zodDiagnostics(fields.error.issues, 'entityFields', 'field.invalid') };
 
   const context: NodeContext = {
-    ids: new Set(), fields: fields?.success ? new Map(fields.data.map((field) => [field.id, field])) : undefined,
+    ids: new Set(), sectionIds: new Set(), sectionReferences: [], fields: fields?.success ? new Map(fields.data.map((field) => [field.id, field])) : undefined,
     diagnostics: [], seen: new WeakSet()
   };
   if (fields?.success) fields.data.forEach((field, index) => {
@@ -185,6 +210,9 @@ export function validatePageDsl(value: unknown, entityFields?: readonly EntityFi
     }
   });
   page.data.nodes.forEach((node, index) => validateNode(node, `nodes[${index}]`, context, 0));
+  context.sectionReferences.forEach(({ sectionId, path }) => {
+    if (!context.sectionIds.has(sectionId)) context.diagnostics.push(diagnostic('section.unresolved', path, `Unknown content section: ${sectionId}`));
+  });
   if (context.diagnostics.length > 0) return { ok: false, diagnostics: context.diagnostics };
   return { ok: true, dsl: value as PageDsl, diagnostics: [] };
 }

@@ -7,6 +7,18 @@ CREATE TABLE IF NOT EXISTS drafts (
   status TEXT NOT NULL CHECK (status IN ('draft', 'confirmed')),
   updatedAt TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS assets (
+  assetId TEXT PRIMARY KEY CHECK (assetId GLOB 'asset-*'),
+  pageId TEXT NOT NULL,
+  draftId TEXT REFERENCES drafts(id) ON DELETE SET NULL,
+  mimeType TEXT NOT NULL CHECK (mimeType = 'image/png'),
+  byteLength INTEGER NOT NULL CHECK (byteLength > 0 AND byteLength <= 20971520),
+  width INTEGER NOT NULL CHECK (width > 0),
+  height INTEGER NOT NULL CHECK (height > 0),
+  sha256 TEXT NOT NULL CHECK (length(sha256) = 64),
+  createdAt TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS assets_by_page ON assets(pageId, createdAt DESC);
 CREATE TABLE IF NOT EXISTS publications (
   id TEXT PRIMARY KEY,
   draftId TEXT NOT NULL REFERENCES drafts(id),

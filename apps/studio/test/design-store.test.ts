@@ -29,6 +29,31 @@ describe('design store', () => {
     expect(() => store.addNode('script' as never, null, 0)).toThrow(/unsupported/i);
   });
 
+  it('adds an image and accepts safe generated asset IDs while rejecting external URLs or invalid display properties', () => {
+    const added = store.addNode('Image', null, 0);
+    expect(added.ok).toBe(true);
+    expect(store.selectedNode.value).toMatchObject({ type: 'Image', props: {
+      assetId: 'asset-workflow', alt: expect.any(String), fit: 'cover', aspectRatio: '16:9'
+    } });
+    expect(store.updateNodeProps(added.nodeId!, { assetId: 'asset-analytics', alt: '业务分析示意图', fit: 'contain', aspectRatio: '4:3' })).toBe(true);
+    expect(store.updateNodeProps(added.nodeId!, { assetId: 'https://example.test/image.png' })).toBe(false);
+    expect(store.updateNodeProps(added.nodeId!, { assetId: 'asset-generated_123' })).toBe(true);
+    expect(store.updateNodeProps(added.nodeId!, { aspectRatio: '2:1' })).toBe(false);
+  });
+
+  it('adds and edits a website conversion block linked to an existing section', () => {
+    const website = { ...page(), pageKind: 'website' as const, nodes: [
+      { id: 'overview', type: 'ContentSection' as const, props: { sectionId: 'overview', title: '核心能力', tone: 'default' }, children: [], slots: [] }
+    ] };
+    store = createDesignStore({ dsl: website, entityFields: fields });
+    const added = store.addNode('CallToAction', null, 1);
+    expect(added.ok).toBe(true);
+    expect(store.selectedNode.value).toMatchObject({ type: 'CallToAction', props: {
+      title: expect.any(String), actionLabel: expect.any(String), targetSectionId: 'overview'
+    } });
+    expect(store.updateNodeProps(added.nodeId!, { targetSectionId: 'missing' })).toBe(false);
+  });
+
   it('removes a selected subtree and clears its selection', () => {
     store.selectNode('first');
     expect(store.removeNode('first')).toBe(true);

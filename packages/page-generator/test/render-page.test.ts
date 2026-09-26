@@ -2,10 +2,10 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { mount } from '@vue/test-utils';
 import { defineComponent } from 'vue';
-import { validPage } from '../../ui-dsl/test/fixtures.js';
+import { imageAssetNode, validPage } from '../../ui-dsl/test/fixtures.js';
 import { bodyCellLabel, displayValue, fieldValue, invokeEvent, matchesCondition, renderPage, tableCellValue, tableRows } from '../src/render-page.js';
 
-const host = defineComponent({ props: { page: { type: Object, required: true }, data: { type: Object, required: true }, handlers: { type: Object, required: true } }, setup(props) { return () => renderPage(props.page, props.data, props.handlers); } });
+const host = defineComponent({ props: { page: { type: Object, required: true }, data: { type: Object, required: true }, handlers: { type: Object, required: true }, assetUrls: { type: Object, default: () => new Map() } }, setup(props) { return () => renderPage(props.page, props.data, props.handlers, props.assetUrls); } });
 
 beforeAll(() => {
   const getStyle = window.getComputedStyle.bind(window);
@@ -25,6 +25,72 @@ describe('renderPage', () => {
     expect(wrapper.text()).toContain('Live');
     expect(wrapper.text()).toContain('Active');
     expect(wrapper.text()).toContain('Summary');
+  });
+
+  it('renders bundled safe SVG assets and background overlays from allowlisted asset IDs', () => {
+    const page = { ...validPage, nodes: [
+      { ...imageAssetNode('generated-image', 'asset-workflow'), props: { ...imageAssetNode().props, alt: 'Generated "product" & view' } },
+      { id: 'hero', type: 'Hero' as const, props: { title: 'Welcome', subtitle: 'Intro', backgroundAssetId: 'asset-analytics', backgroundOverlay: 'dark' }, children: [], slots: [] },
+      { id: 'details', type: 'ContentSection' as const, props: { sectionId: 'details', title: 'Details', tone: 'default', backgroundAssetId: 'asset-collaboration', backgroundOverlay: 'light' }, children: [], slots: [] }
+    ] };
+    const wrapper = mount(host, { props: { page, data: {}, handlers: {} } });
+    expect(wrapper.find('img').attributes()).toMatchObject({ src: expect.stringMatching(/^data:image\/svg\+xml;base64,/), alt: 'Generated "product" & view' });
+    const imageData = wrapper.find('img').attributes('src')!.split(',')[1]!;
+    expect(atob(imageData)).toContain('<svg');
+    expect(wrapper.find('img').element.style.objectFit).toBe('cover');
+    expect(wrapper.find('img').element.style.aspectRatio).toBe('16 / 9');
+    expect(wrapper.find('.pf-hero').element.style.backgroundImage).toContain('data:image/svg+xml;base64');
+    expect(wrapper.find('.pf-hero').element.style.backgroundImage).toContain('rgba(0,0,0,.45)');
+    expect(wrapper.find('.pf-hero').classes()).toContain('pf-hero--image-background');
+    expect(wrapper.find('.pf-section').element.style.backgroundImage).toContain('rgba(255,255,255,.45)');
+  });
+
+  it('keeps the image background contrast class off Hero nodes without a background asset', () => {
+    const page = { ...validPage, nodes: [...validPage.nodes, { id: 'plain-hero', type: 'Hero' as const, props: { title: 'Welcome', subtitle: 'Intro' }, children: [], slots: [] }] };
+    const wrapper = mount(host, { props: { page, data: {}, handlers: {} } });
+    expect(wrapper.find('.pf-hero').classes()).not.toContain('pf-hero--image-background');
+  });
+
+  it('renders unbundled but valid asset IDs when a blob URL is supplied', () => {
+    const assetId = 'asset-unregistered';
+    const page = { ...validPage, nodes: [
+      { id: 'hero', type: 'Hero' as const, props: { title: 'Welcome', subtitle: 'Intro', backgroundAssetId: assetId, backgroundOverlay: 'dark' }, children: [], slots: [] },
+      { id: 'details', type: 'ContentSection' as const, props: { sectionId: 'details', title: 'Details', tone: 'default', backgroundAssetId: assetId, backgroundOverlay: 'light' }, children: [
+        { ...imageAssetNode('dynamic-image', assetId), props: { ...imageAssetNode().props, assetId } }
+      ], slots: [] }
+    ] };
+    const wrapper = mount(host, { props: { page, data: {}, handlers: {}, assetUrls: new Map([[assetId, 'blob:http://localhost/generated-image']]) } });
+    expect(wrapper.find('img').attributes('src')).toBe('blob:http://localhost/generated-image');
+    expect(wrapper.find('.pf-hero').element.style.backgroundImage).toContain('blob:http://localhost/generated-image');
+    expect(wrapper.find('.pf-section').element.style.backgroundImage).toContain('blob:http://localhost/generated-image');
+  });
+
+  it('rejects unbundled IDs rather than accepting arbitrary URLs in the render path', () => {
+    const page = { ...validPage, nodes: [{ ...imageAssetNode(), props: { ...imageAssetNode().props, assetId: 'https://example.test/image.svg' } }] };
+    expect(() => renderPage(page, {}, {})).toThrow('component.prop.invalid');
+  });
+
+  it('renders the website theme with navigation, hero actions, content sections, and feature cards', () => {
+    const page = { ...validPage, pageKind: 'website' as const, nodes: [
+      { id: 'nav', type: 'SiteNavigation' as const, props: { brand: '澄明科技', links: [{ label: '产品', sectionId: 'products' }, { label: '联系', sectionId: 'contact' }] }, children: [], slots: [] },
+      { id: 'hero', type: 'Hero' as const, props: { eyebrow: '企业服务平台', title: '让运营流程更清晰', subtitle: '统一管理关键业务流程。', primaryLabel: '了解产品', primarySectionId: 'products', secondaryLabel: '联系我们', secondarySectionId: 'contact' }, children: [], slots: [] },
+      { id: 'products', type: 'ContentSection' as const, props: { sectionId: 'products', title: '核心能力', description: '围绕团队协作构建。', tone: 'brand' }, children: [
+        { id: 'feature-a', type: 'FeatureCard' as const, props: { title: '流程编排', description: '灵活配置业务流程。', icon: 'workflow' }, children: [], slots: [] },
+        { id: 'feature-b', type: 'FeatureCard' as const, props: { title: '安全管理', description: '集中控制访问权限。' }, children: [], slots: [] }
+      ], slots: [] },
+      { id: 'contact', type: 'ContentSection' as const, props: { sectionId: 'contact', title: '联系团队', tone: 'default' }, children: [], slots: [] },
+      { id: 'conversion', type: 'CallToAction' as const, props: { title: '开启业务升级', description: '预约顾问，了解适合团队的方案。', actionLabel: '预约咨询', targetSectionId: 'contact' }, children: [], slots: [] }
+    ] };
+    const wrapper = mount(host, { props: { page, data: {}, handlers: {} } });
+    expect(wrapper.find('[data-page-kind="website"]').classes()).toContain('pulseflow-page--website');
+    expect(wrapper.find('.pf-site-nav__brand').text()).toBe('澄明科技');
+    expect(wrapper.find('.pf-hero__actions').text()).toContain('联系我们');
+    expect(wrapper.findAll('.pf-section')).toHaveLength(2);
+    expect(wrapper.findAll('.pf-feature-card')).toHaveLength(2);
+    expect(wrapper.find('.pf-cta h2').text()).toBe('开启业务升级');
+    expect(wrapper.find('.pf-cta a').attributes('href')).toBe('#contact');
+    expect(wrapper.find('.pf-feature-card__icon').text()).toBe('↗');
+    expect(wrapper.find('[data-pulseflow-preview-styles]').text()).toContain('.pulseflow-page--website');
   });
 
   it('renders valid button labels as escaped text and invokes only supplied mock handlers', async () => {

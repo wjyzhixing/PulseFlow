@@ -32,6 +32,16 @@ function lineChanges(before: string, after: string): string[] {
 
 export function createUnifiedDiff(conflicts: Conflict[]): string {
   return conflicts.map((conflict) => {
+    if (conflict.binary) {
+      return [
+        `--- local/${conflict.path}`,
+        `+++ published/${conflict.path}`,
+        `@@ ${conflict.reason} @@`,
+        'Binary file conflict',
+        `local sha256: ${conflict.localSha256 ?? '[missing]'}`,
+        `published sha256: ${conflict.remoteSha256 ?? '[unknown]'}`
+      ].join('\n');
+    }
     const contents = conflictDiffContent(conflict);
     const changeLines = contents ? lineChanges(contents.local ?? '[deleted]', contents.remote) : [];
     return [

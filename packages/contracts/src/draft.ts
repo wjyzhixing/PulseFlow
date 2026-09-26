@@ -6,6 +6,15 @@ export interface T2uiResult {
   semanticQuestions: SemanticQuestion[];
 }
 
+export type PageType = 'auto' | 'website' | 'admin';
+
+export interface DraftRefinementInput {
+  instruction: string;
+  entityFields: EntityField[];
+  pageDsl: PageDsl;
+  semanticQuestions: SemanticQuestion[];
+}
+
 export interface Draft {
   id: string;
   pageId: string;

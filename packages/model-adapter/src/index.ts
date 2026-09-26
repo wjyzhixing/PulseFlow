@@ -1,11 +1,11 @@
-export { generateDraft } from './client.js';
-export type { T2uiResult } from './client.js';
+export { generateDraft, refineDraft } from './client.js';
+export type { RefineDraftResult, T2uiResult } from './client.js';
+export type { ImagePlan, Prompt, RefineDraftInput, RefinementIntent, T2uiInput } from './prompt.js';
 export { loadModelConfig } from './config.js';
 export type { ModelConfig } from './config.js';
 export { ModelAdapterError } from './errors.js';
 export type { ModelAdapterErrorCode } from './errors.js';
 export { buildPrompt } from './prompt.js';
-export type { Prompt, T2uiInput } from './prompt.js';
-export { generateImage } from './image-client.js';
+export { generateImage, validatePngBytes } from './image-client.js';
 export { loadImageModelConfig } from './config.js';
 export type { ImageModelConfig } from './config.js';

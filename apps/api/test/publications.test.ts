@@ -16,8 +16,8 @@ const confirmed: Draft = {
   pageDsl: validCandidate.pageDsl, entityFields: validCandidate.entityFields,
   semanticQuestions: validCandidate.semanticQuestions
 };
-const allPassed: GateResult[] = (['dsl', 'preview-compile', 'typecheck', 'template-build', 'eslint'] as const)
-  .map((id) => ({ id, status: 'passed', blocking: id !== 'eslint', diagnostics: [] }));
+const allPassed: GateResult[] = (['dsl', 'preview-compile', 'template-build'] as const)
+  .map((id) => ({ id, status: 'passed', blocking: true, diagnostics: [] }));
 
 describe('publication API', () => {
   it('does not publish an obsolete snapshot when a draft changes during release gates', async () => {
@@ -53,7 +53,7 @@ describe('publication API', () => {
   });
 
   it('blocks publication after any failed hard gate and preserves diagnostics', async () => {
-    for (const gate of ['dsl', 'preview-compile', 'typecheck', 'template-build'] as const) {
+    for (const gate of ['dsl', 'preview-compile', 'template-build'] as const) {
       const results = [...allPassed.slice(0, allPassed.findIndex((item) => item.id === gate)),
         { id: gate, status: 'failed' as const, blocking: true, diagnostics: [{ code: 'gate.failed', path: 'src/generated/Page.vue', message: 'Failed' }] }];
       const app = buildApp({ workspaceToken: 'secret', dbPath: ':memory:', releaseGateRunner: async () => results });
@@ -67,17 +67,16 @@ describe('publication API', () => {
     }
   });
 
-  it('publishes with an ESLint warning; keeps versions immutable and downloads only latest published', async () => {
+  it('publishes with page-focused gates; keeps versions immutable and downloads only latest published', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pulseflow-publications-'));
     const dbPath = join(directory, 'database.sqlite');
-    const warning = { ...allPassed.at(-1)!, status: 'failed' as const, diagnostics: [{ code: 'eslint.failed', path: 'src/generated/Page.vue', message: 'Style warning' }] };
-    const app = buildApp({ workspaceToken: 'secret', dbPath, releaseGateRunner: async () => [...allPassed.slice(0, -1), warning] });
+    const app = buildApp({ workspaceToken: 'secret', dbPath, releaseGateRunner: async () => allPassed });
     try {
       await app.inject({ method: 'POST', url: '/api/drafts', headers, payload: confirmed });
       const firstResponse = await app.inject({ method: 'POST', url: '/api/publications', headers, payload: { draftId: confirmed.id, sourceText: 'PRIVATE REQUIREMENT BODY' } });
       expect(firstResponse.statusCode).toBe(201);
       const first = firstResponse.json().data;
-      expect(first).toMatchObject({ pageId: confirmed.pageId, gates: [...allPassed.slice(0, -1), warning] });
+      expect(first).toMatchObject({ pageId: confirmed.pageId, gates: allPassed });
       expect(first.versionId).toEqual(expect.any(String));
       expect(first.manifest.entry).toBe('src/generated/Page.vue');
       expect(first.files).toContainEqual(expect.objectContaining({ path: 'src/generated/Page.vue' }));

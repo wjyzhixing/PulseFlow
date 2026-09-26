@@ -14,7 +14,7 @@ export function registerCliDownloadRoutes(app: FastifyInstance, publications: Pu
         ...record,
         files: record.files.map((file) => ({
           ...file,
-          sha256: createHash('sha256').update(file.content, 'utf8').digest('hex')
+          sha256: createHash('sha256').update(file.encoding === 'base64' ? Buffer.from(file.content, 'base64') : Buffer.from(file.content, 'utf8')).digest('hex')
         }))
       }
     };

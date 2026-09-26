@@ -6,6 +6,7 @@ export const MANIFEST_PATH = '.pulseflow/manifest.json';
 export interface PublishedFile {
   path: string;
   content: string;
+  encoding?: 'utf8' | 'base64';
   sha256: string;
 }
 
@@ -18,6 +19,7 @@ export interface PublishedBundle {
 export interface ManagedFile {
   path: string;
   sha256: string;
+  encoding?: 'utf8' | 'base64';
 }
 
 export interface PulseFlowManifest {
@@ -26,8 +28,26 @@ export interface PulseFlowManifest {
   files: ManagedFile[];
 }
 
-export function sha256(content: string): string {
-  return createHash('sha256').update(content, 'utf8').digest('hex');
+export function sha256(content: string | Uint8Array): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+function decodeBase64(content: string): Buffer {
+  const canonical = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+  if (!canonical.test(content)) throw new Error('Published base64 content is invalid');
+  const bytes = Buffer.from(content, 'base64');
+  if (bytes.toString('base64') !== content) throw new Error('Published base64 content is invalid');
+  return bytes;
+}
+
+export function publishedFileBytes(file: Pick<PublishedFile, 'content' | 'encoding'>): Buffer {
+  if (file.encoding === 'base64') return decodeBase64(file.content);
+  if (file.encoding === undefined || file.encoding === 'utf8') return Buffer.from(file.content, 'utf8');
+  throw new Error('Published file encoding is invalid');
+}
+
+export function publishedFileSha256(file: Pick<PublishedFile, 'content' | 'encoding'>): string {
+  return sha256(publishedFileBytes(file));
 }
 
 export function isValidPageId(pageId: string): boolean {
@@ -54,8 +74,11 @@ function objectValue(value: unknown): Record<string, unknown> {
 
 function assertExactManifestPaths(value: unknown, files: PublishedFile[]): asserts value is string[] {
   const expected = new Set(files.filter((file) => file.path !== 'src/generated/manifest.json').map((file) => file.path));
-  if (!Array.isArray(value) || value.some((path) => typeof path !== 'string')
-    || value.length !== expected.size || value.some((path) => !expected.has(path as string))) {
+  if (!Array.isArray(value) || value.some((path) => typeof path !== 'string')) {
+    throw new Error('Publication manifest does not match published files');
+  }
+  const paths = new Set(value as string[]);
+  if (paths.size !== value.length || paths.size !== expected.size || [...paths].some((path) => !expected.has(path))) {
     throw new Error('Publication manifest does not match published files');
   }
 }
@@ -103,12 +126,21 @@ export function normalizePublishedBundle(value: unknown, expectedPageId: string)
       || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(file.sha256)) {
       throw new Error('Publication file or checksum is invalid');
     }
+    if (file.encoding !== undefined && file.encoding !== 'utf8' && file.encoding !== 'base64') {
+      throw new Error('Publication file encoding is invalid');
+    }
     assertSafeRelativePath(file.path);
     if (file.path === MANIFEST_PATH) throw new Error(`Unsafe published file path: ${file.path}`);
-    const digest = sha256(file.content);
+    const published: PublishedFile = {
+      path: file.path,
+      content: file.content,
+      ...(file.encoding === undefined ? {} : { encoding: file.encoding }),
+      sha256: file.sha256
+    };
+    const digest = publishedFileSha256(published);
     if (file.sha256 !== digest) throw new Error(`Checksum mismatch for ${file.path}`);
     mappedGeneratedPath(file.path, expectedPageId);
-    return { path: file.path, content: file.content, sha256: digest };
+    return { ...published, sha256: digest };
   });
   const paths = new Set<string>();
   for (const file of sourceFiles) {
@@ -122,6 +154,7 @@ export function normalizePublishedBundle(value: unknown, expectedPageId: string)
   mappedGeneratedPath(manifest.entry, expectedPageId);
   const embeddedManifest = sourceFiles.find((file) => file.path === 'src/generated/manifest.json');
   if (embeddedManifest) {
+    if (embeddedManifest.encoding === 'base64') throw new Error('Generated manifest must be UTF-8 text');
     const embedded = objectValue(JSON.parse(embeddedManifest.content) as unknown);
     if (embedded.pageId !== expectedPageId) {
       throw new Error('Generated manifest does not match published files');
@@ -137,7 +170,8 @@ export function normalizePublishedBundle(value: unknown, expectedPageId: string)
     const content = file.path === 'src/generated/manifest.json'
       ? rewriteGeneratedManifest(file.content, expectedPageId, sourceFiles)
       : file.content;
-    return { path, content, sha256: sha256(content) };
+    const encoding = file.path === 'src/generated/manifest.json' ? undefined : file.encoding;
+    return { path, content, ...(encoding === undefined ? {} : { encoding }), sha256: publishedFileSha256({ content, encoding }) };
   });
   return { pageId: expectedPageId, versionId: record.versionId, files };
 }
@@ -153,11 +187,14 @@ export function parseLocalManifest(content: string): PulseFlowManifest {
     if (typeof file.path !== 'string' || typeof file.sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(file.sha256)) {
       throw new Error('PulseFlow manifest is invalid');
     }
+    if (file.encoding !== undefined && file.encoding !== 'utf8' && file.encoding !== 'base64') {
+      throw new Error('PulseFlow manifest is invalid');
+    }
     assertSafeRelativePath(file.path);
     if (file.path === MANIFEST_PATH) throw new Error('PulseFlow manifest contains a reserved path');
     if (paths.has(file.path)) throw new Error('PulseFlow manifest contains duplicate paths');
     paths.add(file.path);
-    return { path: file.path, sha256: file.sha256 };
+    return { path: file.path, sha256: file.sha256, ...(file.encoding === undefined ? {} : { encoding: file.encoding }) };
   });
   return { pageId: value.pageId, versionId: value.versionId, files };
 }
@@ -166,7 +203,7 @@ export function serializeManifest(bundle: PublishedBundle): string {
   const manifest: PulseFlowManifest = {
     pageId: bundle.pageId,
     versionId: bundle.versionId,
-    files: bundle.files.map(({ path, sha256: digest }) => ({ path, sha256: digest }))
+    files: bundle.files.map(({ path, sha256: digest, encoding }) => ({ path, sha256: digest, ...(encoding === undefined ? {} : { encoding }) }))
   };
   return `${JSON.stringify(manifest, null, 2)}\n`;
 }

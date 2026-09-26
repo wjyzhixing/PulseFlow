@@ -1,6 +1,14 @@
 <script setup lang="ts">
 import { computed } from 'vue';
 import { useRoute } from 'vue-router';
+import {
+  Layout as ALayout,
+  LayoutContent as ALayoutContent,
+  LayoutHeader as ALayoutHeader,
+  LayoutSider as ALayoutSider,
+  Step as AStep,
+  Steps as ASteps
+} from 'ant-design-vue';
 
 const route = useRoute();
 const stage = computed(() => route.path === '/design' ? 4 : route.path === '/draft' ? 3 : route.path === '/login' ? 1 : 2);
@@ -9,32 +17,42 @@ const currentStage = computed(() => stageLabels[stage.value - 1]);
 </script>
 
 <template>
-  <div class="studio">
-    <header class="topbar">
+  <ALayout class="studio-shell">
+    <ALayoutHeader class="topbar">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">P</span>
         <span class="brand-name">PulseFlow <span>Studio</span></span>
       </div>
       <div class="topbar-context">
         <span>业务建模工作台</span>
-        <span class="topbar-divider" aria-hidden="true"></span>
-        <span>当前步骤：{{ currentStage }}</span>
+        <span class="current-stage"><span class="stage-dot" aria-hidden="true"></span>{{ currentStage }}</span>
       </div>
-    </header>
+    </ALayoutHeader>
 
-    <div class="workspace" :class="{ 'design-workspace': stage === 4 }">
-      <aside class="rail" aria-label="工作流程">
+    <nav class="workflow-semantics sr-only" aria-label="工作流程进度">
+      <ol>
+        <li v-for="(label, index) in stageLabels" :key="label" :aria-current="index === stage - 1 ? 'step' : undefined">{{ label }}</li>
+      </ol>
+    </nav>
+
+    <ALayout class="studio-workspace" :class="{ 'design-workspace': stage === 4 }" has-sider>
+      <ALayoutSider class="rail" :width="224" :collapsed="false" theme="light" aria-label="工作流程">
         <div class="rail-heading">工作流程</div>
-        <ol class="workflow-steps">
-          <li :class="{ active: stage === 1, done: stage > 1 }" :aria-current="stage === 1 ? 'step' : undefined"><span class="step-number">01</span><span>工作区登录</span></li>
-          <li :class="{ active: stage === 2, done: stage > 2 }" :aria-current="stage === 2 ? 'step' : undefined"><span class="step-number">02</span><span>需求导入</span></li>
-          <li :class="{ active: stage === 3, done: stage > 3 }" :aria-current="stage === 3 ? 'step' : undefined"><span class="step-number">03</span><span>实体确认</span></li>
-          <li :class="{ active: stage === 4 }" :aria-current="stage === 4 ? 'step' : undefined"><span class="step-number">04</span><span>画布设计</span></li>
-        </ol>
-      </aside>
-      <main class="canvas" :class="{ 'design-canvas-shell': stage === 4 }"><router-view /></main>
-    </div>
-  </div>
+        <ASteps class="workflow-steps workflow-steps--vertical" :current="stage - 1" direction="vertical" size="small" aria-hidden="true">
+          <AStep v-for="label in stageLabels" :key="label" :title="label" />
+        </ASteps>
+      </ALayoutSider>
+
+      <ALayoutContent class="canvas" :class="{ 'design-canvas-shell': stage === 4 }">
+        <div class="mobile-workflow" aria-label="工作流程">
+          <ASteps class="workflow-steps workflow-steps--horizontal" :current="stage - 1" :responsive="false" size="small" aria-hidden="true">
+            <AStep v-for="label in stageLabels" :key="label" :title="label" />
+          </ASteps>
+        </div>
+        <router-view />
+      </ALayoutContent>
+    </ALayout>
+  </ALayout>
 </template>
 
 <style>
@@ -42,8 +60,10 @@ const currentStage = computed(() => stageLabels[stage.value - 1]);
 button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 
-.studio { min-height: 100vh; }
-.topbar {
+.studio-shell { min-height: 100vh; background: var(--pf-color-bg); }
+.topbar.ant-layout-header {
+  position: relative;
+  z-index: 2;
   height: 64px;
   padding: 0 var(--pf-space-5);
   display: flex;
@@ -52,7 +72,7 @@ button { cursor: pointer; }
   gap: var(--pf-space-4);
   background: var(--pf-color-surface);
   border-bottom: var(--pf-border-width) solid var(--pf-color-border-secondary);
-  box-shadow: var(--pf-shadow-sm);
+  line-height: normal;
 }
 .brand { display: flex; align-items: center; gap: var(--pf-space-3); white-space: nowrap; }
 .brand-mark {
@@ -61,7 +81,7 @@ button { cursor: pointer; }
   display: grid;
   place-items: center;
   border-radius: var(--pf-radius);
-  background: var(--pf-color-primary-strong);
+  background: var(--pf-color-primary);
   color: var(--pf-color-surface);
   font-size: var(--pf-font-size-lg);
   font-weight: 700;
@@ -70,20 +90,30 @@ button { cursor: pointer; }
 .brand-name { font-size: var(--pf-font-size-lg); font-weight: 600; letter-spacing: -0.02em; }
 .brand-name span { color: var(--pf-color-text-secondary); font-weight: 400; }
 .topbar-context { display: flex; align-items: center; gap: var(--pf-space-4); color: var(--pf-color-text-secondary); font-size: var(--pf-font-size-sm); }
-.topbar-divider { height: 14px; border-left: var(--pf-border-width) solid var(--pf-color-border); }
+.current-stage { display: inline-flex; align-items: center; gap: var(--pf-space-2); color: var(--pf-color-text); }
+.stage-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--pf-color-primary); }
 
-.workspace { display: grid; grid-template-columns: 224px minmax(0, 1fr); min-height: calc(100vh - 64px); }
-.workspace.design-workspace { grid-template-columns: 224px minmax(0, 1fr); }
-.rail { background: var(--pf-color-surface); border-right: var(--pf-border-width) solid var(--pf-color-border-secondary); padding: var(--pf-space-5) var(--pf-space-3); }
-.rail-heading { padding: 0 var(--pf-space-3) var(--pf-space-3); color: var(--pf-color-text-secondary); font-size: var(--pf-font-size-sm); font-weight: 600; }
-.workflow-steps { list-style: none; margin: 0; padding: 0; }
-.workflow-steps li { min-height: 44px; display: flex; align-items: center; gap: var(--pf-space-3); padding: 0 var(--pf-space-3); border-radius: var(--pf-radius); color: var(--pf-color-text-secondary); white-space: nowrap; }
-.workflow-steps li.active { background: #e6f4ff; color: var(--pf-color-primary-strong); font-weight: 600; }
-.workflow-steps li.done .step-number { color: var(--pf-color-primary-strong); border-color: #91caff; }
-.step-number { width: 24px; height: 24px; display: grid; flex: 0 0 24px; place-items: center; border: var(--pf-border-width) solid var(--pf-color-border); border-radius: 50%; background: var(--pf-color-surface); color: #8c8c8c; font-size: var(--pf-font-size-sm); font-variant-numeric: tabular-nums; }
-.workflow-steps li.active .step-number { border-color: var(--pf-color-primary-strong); background: var(--pf-color-primary-strong); color: var(--pf-color-surface); }
-.canvas { min-width: 0; background: var(--pf-color-bg); padding: clamp(24px, 3vw, 48px); }
+.studio-workspace.ant-layout { min-height: calc(100vh - 64px); background: var(--pf-color-bg); }
+.rail.ant-layout-sider {
+  flex: 0 0 224px !important;
+  width: 224px !important;
+  max-width: 224px !important;
+  min-width: 224px !important;
+  padding: var(--pf-space-5) var(--pf-space-3);
+  background: var(--pf-color-surface);
+  border-right: var(--pf-border-width) solid var(--pf-color-border-secondary);
+}
+.rail-heading { padding: 0 var(--pf-space-3) var(--pf-space-4); color: var(--pf-color-text-secondary); font-size: var(--pf-font-size-sm); font-weight: 600; }
+.workflow-steps--vertical .ant-steps-item { min-height: 52px; }
+.workflow-steps--vertical .ant-steps-item-title { color: var(--pf-color-text-secondary); font-size: var(--pf-font-size-sm); }
+.workflow-steps--vertical .ant-steps-item-process .ant-steps-item-title { color: var(--pf-color-primary-strong); font-weight: 600; }
+.workflow-steps--vertical .ant-steps-item-finish .ant-steps-item-title { color: var(--pf-color-text); }
+.workflow-steps--vertical .ant-steps-item-icon { background: var(--pf-color-surface); }
+.workflow-steps--vertical .ant-steps-item-process .ant-steps-item-icon { background: var(--pf-color-primary); border-color: var(--pf-color-primary); }
+.canvas.ant-layout-content { min-width: 0; padding: clamp(24px, 3vw, 48px); background: var(--pf-color-bg); }
 .canvas.design-canvas-shell { padding: var(--pf-space-5); }
+.mobile-workflow { display: none; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 .panel { max-width: 960px; margin: 0 auto; }
 .eyebrow { color: var(--pf-color-text-secondary); margin-bottom: var(--pf-space-2); font-size: var(--pf-font-size-sm); font-weight: 500; letter-spacing: .02em; }
@@ -110,15 +140,15 @@ button { cursor: pointer; }
 .tag { display: inline-flex; align-items: center; font-size: var(--pf-font-size-sm); color: var(--pf-color-text-secondary); background: #f5f5f5; border: var(--pf-border-width) solid var(--pf-color-border-secondary); padding: var(--pf-space-1) var(--pf-space-2); border-radius: var(--pf-radius-sm); }
 
 @media (max-width: 760px) {
-  .topbar { padding: 0 var(--pf-space-4); }
+  .topbar.ant-layout-header { padding: 0 var(--pf-space-4); }
   .topbar-context { display: none; }
-  .workspace, .workspace.design-workspace { display: block; }
-  .rail { padding: var(--pf-space-2) var(--pf-space-3); border-right: 0; border-bottom: var(--pf-border-width) solid var(--pf-color-border-secondary); overflow-x: auto; }
-  .rail-heading { display: none; }
-  .workflow-steps { display: flex; width: max-content; gap: var(--pf-space-1); }
-  .workflow-steps li { min-height: 36px; padding: 0 var(--pf-space-2); font-size: var(--pf-font-size-sm); }
-  .workflow-steps li .step-number { font-size: 11px; }
-  .canvas, .canvas.design-canvas-shell { padding: var(--pf-space-5); }
+  .studio-workspace.ant-layout { display: block; }
+  .rail.ant-layout-sider { display: none; }
+  .canvas.ant-layout-content, .canvas.design-canvas-shell { padding: 0 var(--pf-space-4) var(--pf-space-5); }
+  .mobile-workflow { display: block; margin: 0 calc(-1 * var(--pf-space-4)) var(--pf-space-4); padding: var(--pf-space-3) var(--pf-space-4); overflow-x: auto; background: var(--pf-color-surface); border-bottom: var(--pf-border-width) solid var(--pf-color-border-secondary); }
+  .workflow-steps--horizontal { width: 100%; min-width: 0; }
+  .workflow-steps--horizontal .ant-steps-item { min-width: 0; }
+  .workflow-steps--horizontal .ant-steps-item-title { max-width: 100%; font-size: 10px; line-height: 1.25; text-align: center; white-space: normal; overflow-wrap: anywhere; }
   .grid-two { grid-template-columns: 1fr; }
 }
 </style>

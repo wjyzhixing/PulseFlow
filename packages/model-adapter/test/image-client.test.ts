@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { deflateSync } from 'node:zlib';
-import { generateImage, generateImageWithTestDependencies } from '../src/image-client.js';
+import sharp from 'sharp';
+import { createPinnedLookup, generateImage, generateImageWithTestDependencies } from '../src/image-client.js';
 import * as packageApi from '../src/index.js';
 import type { ImageModelConfig } from '../src/config.js';
 
@@ -60,6 +61,12 @@ const baseConfig: ImageModelConfig = {
 const imageResponse = (value: unknown) => new Response(JSON.stringify(value), { headers: { 'x-request-id': 'req-1' } });
 
 describe('generateImage', () => {
+  it('returns pinned addresses in the array form requested by Node when all is true', () => {
+    const callback = vi.fn();
+    createPinnedLookup('8.8.8.8')('images.example', { all: true }, callback as never);
+    expect(callback).toHaveBeenCalledWith(null, [{ address: '8.8.8.8', family: 4 }]);
+  });
+
   it('keeps test transport injection out of the package API', () => {
     expect(packageApi.generateImage).toBeTypeOf('function');
     expect(packageApi).not.toHaveProperty('generateImageWithTestDependencies');
@@ -74,6 +81,42 @@ describe('generateImage', () => {
     expect(url).toBe(baseConfig.endpointUrl);
     expect((init.headers as Record<string, string>).authorization).toBe(`Bearer ${TEST_KEY}`);
     expect(JSON.parse(String(init.body))).toMatchObject({ model: 'qwen-image-2.0', prompt: 'Draw a flower', n: 1 });
+  });
+
+  it('uses Chat Completions for the TokenRhythm image model and accepts a single PNG data URI', async () => {
+    const endpointUrl = 'https://model.example/v1/chat/completions';
+    const fetchImpl = vi.fn(async () => imageResponse({
+      choices: [{ message: { content: `data:image/png;base64,${Buffer.from(png).toString('base64')}` } }]
+    }));
+    const result = await generateImage('Draw a flower', {
+      ...baseConfig, endpointUrl, mode: 'openai-chat-completions', fetchImpl
+    });
+    expect(result.bytes).toEqual(png);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(endpointUrl);
+    expect((init.headers as Record<string, string>).authorization).toBe(`Bearer ${TEST_KEY}`);
+    expect(JSON.parse(String(init.body))).toEqual({
+      model: 'qwen-image-2.0', messages: [{ role: 'user', content: 'Draw a flower' }]
+    });
+  });
+
+  it.each([
+    ['Markdown image URL', { choices: [{ message: { content: '![generated](https://images.example/generated.png)' } }] }, true],
+    ['OpenAI image content part', { choices: [{ message: { content: [{ type: 'image_url', image_url: { url: `data:image/png;base64,${Buffer.from(png).toString('base64')}` } }] } }] }, false],
+    ['image content part', { choices: [{ message: { content: [{ type: 'image', image: `data:image/png;base64,${Buffer.from(png).toString('base64')}` }] } }] }, false]
+  ])('accepts one marked Chat Completions image in %s format', async (_format, envelope, needsDownload) => {
+    const fetchImpl = vi.fn(async () => imageResponse(envelope));
+    const downloadPinnedResult = vi.fn(async () => new Response(png));
+    const result = await generateImageWithTestDependencies('Draw', {
+      ...baseConfig, endpointUrl: 'https://model.example/v1/chat/completions', mode: 'openai-chat-completions',
+      allowedResultHosts: ['images.example'], fetchImpl
+    }, {
+      resolveResultHost: async () => [{ address: '8.8.8.8', family: 4 }] as never,
+      downloadPinnedResult
+    });
+    expect(result.bytes).toEqual(png);
+    expect(downloadPinnedResult).toHaveBeenCalledTimes(needsDownload ? 1 : 0);
   });
 
   it('keeps generic fetch on provider POST and gives the pinned downloader the validated target', async () => {
@@ -107,6 +150,30 @@ describe('generateImage', () => {
     expect(downloadPinnedResult).toHaveBeenCalledWith({ url: 'https://8.8.8.8/image.png', address: '8.8.8.8' }, expect.any(AbortSignal));
     const request = JSON.parse(String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body));
     expect(request).toMatchObject({ model: 'qwen-image-2.0', input: { messages: [{ role: 'user', content: [{ text: 'Draw' }] }] } });
+  });
+
+  it('calls the confirmed Ark Seedream image protocol and converts its JPEG result to a validated PNG', async () => {
+    const endpointUrl = 'https://ark.cn-beijing.volces.com/api/plan/v3/images/generations';
+    const resultUrl = 'https://ark-acg-cn-beijing.tos-cn-beijing.volces.com/generated.jpeg?signature=temporary';
+    const jpeg = await sharp(png).jpeg().toBuffer();
+    const fetchImpl = vi.fn(async () => imageResponse({ model: 'doubao-seedream-5.0-lite', data: [{ url: resultUrl, size: '2048x2048' }] }));
+    const downloadPinnedResult = vi.fn(async () => new Response(jpeg, { headers: { 'content-type': 'image/jpeg' } }));
+    const result = await generateImageWithTestDependencies('Draw a robotics hero', {
+      ...baseConfig, endpointUrl, model: 'doubao-seedream-5.0-lite', mode: 'volcengine-ark-images',
+      allowedResultHosts: ['ark-acg-cn-beijing.tos-cn-beijing.volces.com'], fetchImpl
+    }, {
+      resolveResultHost: async () => [{ address: '8.8.8.8', family: 4 }] as never,
+      downloadPinnedResult
+    });
+
+    expect(result).toMatchObject({ mimeType: 'image/png', width: 2, height: 3 });
+    expect(result.bytes.subarray(0, 8)).toEqual(Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]));
+    const [url, init] = fetchImpl.mock.calls[0] as unknown as [string, RequestInit];
+    expect(url).toBe(endpointUrl);
+    expect(JSON.parse(String(init.body))).toEqual({
+      model: 'doubao-seedream-5.0-lite', prompt: 'Draw a robotics hero', size: '2K', response_format: 'url', watermark: false
+    });
+    expect(downloadPinnedResult).toHaveBeenCalledWith(expect.objectContaining({ url: resultUrl }), expect.any(AbortSignal));
   });
 
   it.each([{}, { output: { choices: [{ message: { content: [] } }] } }])(
@@ -157,7 +224,7 @@ describe('generateImage', () => {
     })).rejects.toMatchObject({ code: 'invalid_schema' });
   });
 
-  it.each(['http://127.0.0.1/a', 'https://169.254.1.1/a', 'https://9.9.9.9/a', 'file:///tmp/a'])(
+  it.each(['http://127.0.0.1/a', 'http://8.8.8.8/a', 'https://169.254.1.1/a', 'https://9.9.9.9/a', 'file:///tmp/a'])(
     'rejects unsafe result URL %s before downloading', async (url) => {
       const fetchImpl = vi.fn(async () => imageResponse({ data: [{ url }] }));
       await expect(generateImage('Draw', { ...baseConfig, fetchImpl })).rejects.toMatchObject({ code: 'invalid_schema' });
@@ -199,7 +266,9 @@ describe('generateImage', () => {
     { ...baseConfig, mode: 'unknown' },
     { ...baseConfig, timeoutMs: Number.NaN },
     { ...baseConfig, allowedResultHosts: null },
-    { ...baseConfig, endpointUrl: 'ftp://model.example/images' }
+    { ...baseConfig, endpointUrl: 'ftp://model.example/images' },
+    { ...baseConfig, endpointUrl: 'http://model.example/images' },
+    { ...baseConfig, endpointUrl: 'https://model.example/v1?tenant=example' }
   ])('rejects invalid image endpoint configuration before fetch', async (config) => {
     const fetchImpl = vi.fn();
     await expect(generateImage('Draw', { ...config, fetchImpl } as unknown as ImageModelConfig))

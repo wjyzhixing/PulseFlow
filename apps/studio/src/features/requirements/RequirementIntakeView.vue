@@ -9,6 +9,12 @@ import { generateDraft } from '../draft/draft-api';
 import { setBlankDraft, setDraft } from '../draft/draft-store';
 const router = useRouter();
 const text = shallowRef(''); const file = shallowRef<File | null>(null); const error = shallowRef(''); const busy = shallowRef(false);
+const pageType = shallowRef<'auto' | 'website' | 'admin'>('auto');
+const pageTypeOptions = [
+  { value: 'auto', label: '自动识别', description: '根据需求判断页面类型' },
+  { value: 'website', label: '企业官网', description: '导航、首屏、内容区块与行动入口' },
+  { value: 'admin', label: '管理平台', description: '指标、筛选条件与数据列表' }
+] as const;
 const sections = shallowRef<RequirementSection[]>([]); const selectedIds = shallowRef<string[]>([]);
 const source = shallowRef<InstanceType<typeof RequirementSource> | null>(null);
 const maxBytes = 10 * 1024 * 1024;
@@ -38,7 +44,7 @@ async function generate() {
   const selected = sections.value.filter((section) => selectedIds.value.includes(section.id));
   if (!selected.length) { error.value = '请先选择至少一个章节'; return; }
   busy.value = true; error.value = '';
-  try { setDraft(await generateDraft(selected)); await router.push('/draft'); }
+  try { setDraft(await generateDraft(selected, pageType.value)); await router.push('/draft'); }
   catch (cause) { error.value = cause instanceof Error ? cause.message : '生成失败，请重试'; }
   finally { busy.value = false; }
 }
@@ -56,6 +62,13 @@ async function startBlankDraft() {
       </div>
       <button class="btn secondary blank-action" type="button" data-testid="start-blank-draft" :disabled="busy" @click="startBlankDraft">从空白画布开始 →</button>
     </div>
+    <fieldset class="page-type-picker" :disabled="busy">
+      <legend>生成页面类型</legend>
+      <label v-for="option in pageTypeOptions" :key="option.value" class="page-type-option" :class="{ selected: pageType === option.value }" :data-testid="`page-type-${option.value}`">
+        <input v-model="pageType" type="radio" name="page-type" :value="option.value">
+        <span class="page-type-copy"><strong>{{ option.label }}</strong><small>{{ option.description }}</small></span>
+      </label>
+    </fieldset>
     <RequirementSource ref="source" :text="text" :file-name="file?.name || ''" :busy="busy" :error="error" @update:text="text = $event" @file="onFile" @parse="parse"/>
     <SectionSelection v-if="sections.length" :sections="sections" :selected-ids="selectedIds" :busy="busy" @toggle="toggle" @generate="generate" @add-manual="addManual"/>
   </div>
@@ -63,11 +76,22 @@ async function startBlankDraft() {
 <style scoped>
 .intake-panel { max-width: 800px; }
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--pf-space-4); margin-bottom: var(--pf-space-5); }
+.page-type-picker { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: var(--pf-space-2); margin: 0 0 var(--pf-space-4); padding: 0; border: 0; }
+.page-type-picker legend { margin-bottom: var(--pf-space-2); color: var(--pf-color-text); font-size: var(--pf-font-size-sm); font-weight: 600; }
+.page-type-option { display: flex; align-items: flex-start; gap: var(--pf-space-2); min-width: 0; min-height: 62px; padding: var(--pf-space-3); border: var(--pf-border-width) solid var(--pf-color-border); border-radius: var(--pf-radius); background: var(--pf-color-surface); cursor: pointer; }
+.page-type-option.selected { border-color: var(--pf-color-primary); background: #e6f4ff; }
+.page-type-option input { flex: none; margin: 3px 0 0; accent-color: var(--pf-color-primary); }
+.page-type-copy { min-width: 0; }
+.page-type-copy strong, .page-type-copy small { display: block; }
+.page-type-copy strong { color: var(--pf-color-text); font-size: var(--pf-font-size-sm); font-weight: 600; }
+.page-type-copy small { margin-top: var(--pf-space-1); color: var(--pf-color-text-secondary); font-size: 11px; line-height: 1.4; }
+.page-type-option:focus-within { outline: 2px solid var(--pf-color-primary); outline-offset: 2px; }
+.page-type-picker:disabled .page-type-option { opacity: .6; cursor: not-allowed; }
 .page-title { margin: 0 0 var(--pf-space-1); color: var(--pf-color-text); font: 600 24px/1.4 var(--pf-font-family); letter-spacing: 0; }
 .lede { margin: 0; color: var(--pf-color-text-secondary); line-height: var(--pf-line-height); }
 .blank-action { flex: none; margin: 0; min-height: 36px; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid var(--pf-color-border); border-radius: var(--pf-radius); background: var(--pf-color-surface); color: var(--pf-color-text); font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
-.blank-action:hover { border-color: var(--pf-color-primary-strong); background: var(--pf-color-surface); color: var(--pf-color-primary-strong); }
+.blank-action:hover { border-color: var(--pf-color-primary); background: var(--pf-color-surface); color: var(--pf-color-primary-strong); }
 .blank-action:focus-visible { outline: 2px solid var(--pf-color-primary); outline-offset: 2px; }
 .blank-action:disabled { opacity: .55; cursor: not-allowed; }
-@media (max-width: 640px) { .page-heading { flex-direction: column; } .blank-action { width: 100%; } }
+@media (max-width: 640px) { .page-heading { flex-direction: column; } .blank-action { width: 100%; } .page-type-picker { grid-template-columns: 1fr; } .page-type-option { min-height: auto; } }
 </style>

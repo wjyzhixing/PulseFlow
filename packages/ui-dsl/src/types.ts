@@ -36,6 +36,7 @@ export interface PageDsl {
   schemaVersion: 1;
   pageId: string;
   title: string;
+  pageKind?: 'website' | 'admin';
   nodes: UiNode[];
 }
 

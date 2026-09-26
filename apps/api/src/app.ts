@@ -1,23 +1,28 @@
 import rateLimit from '@fastify/rate-limit';
 import multipart from '@fastify/multipart';
 import Fastify, { type FastifyInstance } from 'fastify';
-import type { ModelConfig } from '@pulseflow/model-adapter';
+import type { ImageModelConfig, ModelConfig } from '@pulseflow/model-adapter';
 import { hasValidBearerToken, unauthorized } from './auth/require-workspace-token.js';
 import { loadApiConfig } from './config.js';
 import { openDatabase } from './db/database.js';
 import { DraftRepository } from './db/draft-repository.js';
+import { AssetRepository } from './db/asset-repository.js';
 import { PublicationRepository } from './db/publication-repository.js';
 import { registerDraftRoutes } from './routes/drafts.js';
+import { registerAssetRoutes } from './routes/assets.js';
 import { registerPublicationRoutes } from './routes/publications.js';
 import { registerCliDownloadRoutes } from './routes/cli-download.js';
 import { registerRequirementRoutes } from './routes/requirements.js';
 import { registerSessionRoutes } from './routes/session.js';
 import type { ReleaseGateRunner } from './services/publication-service.js';
+import { AssetStore } from './services/asset-store.js';
 
 interface BuildAppOptions {
   workspaceToken?: string;
   dbPath?: string;
+  assetDir?: string;
   modelConfig?: ModelConfig;
+  imageConfig?: ImageModelConfig;
   releaseGateRunner?: ReleaseGateRunner;
   rateLimit?: {
     max: number;
@@ -37,6 +42,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
     return reply.code(status).send({ ok: false, error: { code, message } });
   });
   const db = openDatabase(options.dbPath ?? config.dbPath);
+  const drafts = new DraftRepository(db);
+  const assets = new AssetRepository(db);
+  const assetStore = new AssetStore(assets, options.assetDir ?? config.assetDir);
   app.addHook('onClose', async () => { db.close(); });
   app.register(rateLimit, {
     global: true,
@@ -52,8 +60,9 @@ export function buildApp(options: BuildAppOptions = {}): FastifyInstance {
         if (!hasValidBearerToken(request.headers.authorization, workspaceToken)) return reply.code(401).send(unauthorized);
       });
       protectedRoutes.register(async (requirements) => { registerRequirementRoutes(requirements); }, { prefix: '/api/requirements' });
-      protectedRoutes.register(async (draftRoutes) => { registerDraftRoutes(draftRoutes, new DraftRepository(db), options.modelConfig); }, { prefix: '/api/drafts' });
-      protectedRoutes.register(async (publicationRoutes) => { registerPublicationRoutes(publicationRoutes, new DraftRepository(db), new PublicationRepository(db), options.releaseGateRunner); }, { prefix: '/api/publications' });
+      protectedRoutes.register(async (draftRoutes) => { registerDraftRoutes(draftRoutes, drafts, options.modelConfig, options.imageConfig, assetStore, assets); }, { prefix: '/api/drafts' });
+      protectedRoutes.register(async (assetRoutes) => { registerAssetRoutes(assetRoutes, drafts, assets, assetStore, options.imageConfig); }, { prefix: '/api/assets' });
+      protectedRoutes.register(async (publicationRoutes) => { registerPublicationRoutes(publicationRoutes, drafts, new PublicationRepository(db), options.releaseGateRunner, assets, assetStore); }, { prefix: '/api/publications' });
       protectedRoutes.register(async (cliRoutes) => { registerCliDownloadRoutes(cliRoutes, new PublicationRepository(db)); }, { prefix: '/api/cli' });
     });
   });

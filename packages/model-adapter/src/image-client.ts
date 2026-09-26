@@ -3,6 +3,7 @@ import { isIP } from 'node:net';
 import { request as httpRequest } from 'node:http';
 import { request as httpsRequest } from 'node:https';
 import { inflateSync } from 'node:zlib';
+import sharp from 'sharp';
 import type { ImageModelConfig } from './config.js';
 import { ModelAdapterError } from './errors.js';
 
@@ -23,7 +24,7 @@ function endpoint(config: ImageModelConfig): string {
   if (!config.apiKey?.trim() || !config.model?.trim() || !config.baseUrl?.trim()) {
     throw new ModelAdapterError('config', 'Image model configuration is incomplete');
   }
-  if (config.mode !== 'openai-images' && config.mode !== 'dashscope-native') {
+  if (config.mode !== 'openai-images' && config.mode !== 'dashscope-native' && config.mode !== 'openai-chat-completions' && config.mode !== 'volcengine-ark-images') {
     throw new ModelAdapterError('config', 'Image model mode is invalid');
   }
   if (!Number.isSafeInteger(config.timeoutMs) || config.timeoutMs <= 0 || !Array.isArray(config.allowedResultHosts)) {
@@ -31,7 +32,7 @@ function endpoint(config: ImageModelConfig): string {
   }
   try {
     const url = new URL(config.endpointUrl);
-    if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash) throw new Error();
+    if (url.protocol !== 'https:' || url.username || url.password || url.search || url.hash) throw new Error();
     return url.toString();
   } catch {
     throw new ModelAdapterError('config', 'Image model endpoint is invalid');
@@ -79,10 +80,56 @@ async function readLimited(response: Response, limit: number): Promise<Uint8Arra
   return bytes;
 }
 
+function pngDataUri(value: string): ImageSource | undefined {
+  const match = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  return match ? { kind: 'base64', value: match[1] } : undefined;
+}
+
+function chatImageSource(envelope: Record<string, unknown>): ImageSource {
+  const choices = envelope.choices;
+  if (!Array.isArray(choices) || choices.length !== 1 || !choices[0] || typeof choices[0] !== 'object') return invalid();
+  const message = (choices[0] as { message?: unknown }).message;
+  if (!message || typeof message !== 'object') return invalid();
+  const content = (message as { content?: unknown }).content;
+  const candidates: ImageSource[] = [];
+  const addValue = (value: unknown) => {
+    if (typeof value !== 'string' || value.length === 0) return;
+    const data = pngDataUri(value);
+    if (data) { candidates.push(data); return; }
+    try {
+      const url = new URL(value);
+      if (['http:', 'https:'].includes(url.protocol)) candidates.push({ kind: 'url', value: url.toString() });
+    } catch { /* Non-image text is ignored; exactly one marked image is required below. */ }
+  };
+  if (typeof content === 'string') {
+    const value = content.trim();
+    const direct = pngDataUri(value);
+    if (direct) candidates.push(direct);
+    else {
+      const markdown = [...value.matchAll(/!\[[^\]]*\]\((https?:\/\/[^\s)]+|data:image\/png;base64,[A-Za-z0-9+/]+={0,2})\)/g)];
+      for (const match of markdown) addValue(match[1]);
+      if (markdown.length === 0 && /^https?:\/\//.test(value)) addValue(value);
+    }
+  } else if (Array.isArray(content)) {
+    for (const part of content) {
+      if (!part || typeof part !== 'object') continue;
+      const item = part as Record<string, unknown>;
+      if (item.type === 'image_url' && item.image_url && typeof item.image_url === 'object') {
+        addValue((item.image_url as { url?: unknown }).url);
+      } else if (item.type === 'image' && typeof item.image === 'string') {
+        addValue(item.image);
+      }
+    }
+  }
+  if (candidates.length !== 1) return invalid();
+  return candidates[0];
+}
+
 function parseSource(envelope: unknown, mode: ImageModelConfig['mode']): ImageSource {
   if (!envelope || typeof envelope !== 'object') return invalid();
+  if (mode === 'openai-chat-completions') return chatImageSource(envelope as Record<string, unknown>);
   let value: unknown;
-  if (mode === 'openai-images') {
+  if (mode === 'openai-images' || mode === 'volcengine-ark-images') {
     const data = (envelope as { data?: unknown }).data;
     if (!Array.isArray(data) || data.length !== 1) return invalid();
     value = data[0];
@@ -119,7 +166,7 @@ type PinnedResultDownload = (target: PinnedTarget, signal: AbortSignal) => Promi
 async function validateResultUrl(value: string, allowedHosts: readonly string[], resolveResultHost: typeof lookup): Promise<PinnedTarget> {
   let url: URL;
   try { url = new URL(value); } catch { return invalid('Image result URL is invalid'); }
-  if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.hash ||
+  if (url.protocol !== 'https:' || url.username || url.password || url.hash ||
       !allowedHosts.includes(url.hostname.toLowerCase())) invalid('Image result URL is not allowed');
   try {
     const addresses = isIP(url.hostname) ? [url.hostname] : (await resolveResultHost(url.hostname, { all: true })).map((item) => item.address);
@@ -131,16 +178,27 @@ async function validateResultUrl(value: string, allowedHosts: readonly string[],
   }
 }
 
+type PinnedLookupCallback = ((error: NodeJS.ErrnoException | null, address: string, family: number) => void) |
+  ((error: NodeJS.ErrnoException | null, addresses: Array<{ address: string; family: number }>) => void);
+
+export function createPinnedLookup(address: string) {
+  const family = isIP(address);
+  return (_hostname: string, options: { all?: boolean }, callback: PinnedLookupCallback) => {
+    if (options.all) {
+      (callback as (error: NodeJS.ErrnoException | null, addresses: Array<{ address: string; family: number }>) => void)(null, [{ address, family }]);
+      return;
+    }
+    (callback as (error: NodeJS.ErrnoException | null, address: string, family: number) => void)(null, address, family);
+  };
+}
+
 async function pinnedHttpFetch(target: PinnedTarget, signal: AbortSignal): Promise<Response> {
   const url = new URL(target.url);
   const request = url.protocol === 'https:' ? httpsRequest : httpRequest;
-  const lookupPinned = (_hostname: string, _options: unknown, callback: (error: NodeJS.ErrnoException | null, address: string, family: number) => void) => {
-    callback(null, target.address, isIP(target.address));
-  };
   return await new Promise((resolve, reject) => {
     const req = request(url, {
       method: 'GET', signal, servername: target.servername,
-      lookup: lookupPinned as never
+      lookup: createPinnedLookup(target.address) as never
     }, (res) => {
       const parts: Uint8Array[] = [];
       let total = 0;
@@ -283,6 +341,12 @@ function validatePng(bytes: Uint8Array, requestId?: string): ImageResult {
   return { bytes, mimeType: 'image/png', width, height, ...(requestId ? { requestId } : {}) };
 }
 
+/** Validate PNG structure, checksums, compressed pixels and configured resource bounds. */
+export function validatePngBytes(bytes: Uint8Array): { width: number; height: number } {
+  const image = validatePng(bytes);
+  return { width: image.width, height: image.height };
+}
+
 type ImageClientTestDependencies = { resolveResultHost?: typeof lookup; downloadPinnedResult?: PinnedResultDownload };
 
 async function generateImageInternal(
@@ -294,9 +358,13 @@ async function generateImageInternal(
   if (!prompt?.trim() || prompt.length > MAX_PROMPT_CHARS) invalid('Image prompt is required and must be at most 4000 characters');
   const signal = AbortSignal.timeout(config.timeoutMs);
   const fetchImpl = config.fetchImpl ?? fetch;
-  const body = config.mode === 'openai-images'
+  const body = config.mode === 'volcengine-ark-images'
+    ? { model: config.model, prompt, size: '2K', response_format: 'url', watermark: false }
+    : config.mode === 'openai-images'
     ? { model: config.model, prompt, n: 1, response_format: 'b64_json' }
-    : { model: config.model, input: { messages: [{ role: 'user', content: [{ text: prompt }] }] }, parameters: { size: '1024*1024', n: 1 } };
+    : config.mode === 'openai-chat-completions'
+      ? { model: config.model, messages: [{ role: 'user', content: prompt }] }
+      : { model: config.model, input: { messages: [{ role: 'user', content: [{ text: prompt }] }] }, parameters: { size: '1024*1024', n: 1 } };
   const response = await safeFetch(fetchImpl, url, {
     method: 'POST', headers: { authorization: `Bearer ${config.apiKey}`, 'content-type': 'application/json' },
     body: JSON.stringify(body), signal, redirect: 'manual'
@@ -319,6 +387,14 @@ async function generateImageInternal(
       : await pinnedHttpFetch(target, signal);
     if (!downloaded.ok || downloaded.status >= 300) throw new ModelAdapterError('http', `Image download failed with HTTP ${downloaded.status}`, downloaded.status);
     bytes = await readLimited(downloaded, MAX_BYTES);
+  }
+  if (config.mode === 'volcengine-ark-images' && bytes[0] === 0xff && bytes[1] === 0xd8) {
+    try {
+      bytes = new Uint8Array(await sharp(bytes, { limitInputPixels: MAX_PIXELS, sequentialRead: true }).rotate().png().toBuffer());
+    } catch {
+      invalid('Volcengine returned an invalid or oversized JPEG image');
+    }
+    if (bytes.byteLength > MAX_BYTES) invalid('Converted image exceeds size limit');
   }
   return validatePng(bytes, requestId);
 }

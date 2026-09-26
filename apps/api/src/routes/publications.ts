@@ -2,16 +2,25 @@ import type { FastifyInstance } from 'fastify';
 import type { DraftRepository } from '../db/draft-repository.js';
 import type { PublicationRepository } from '../db/publication-repository.js';
 import { publishDraft, type ReleaseGateRunner } from '../services/publication-service.js';
+import type { AssetRepository } from '../db/asset-repository.js';
+import type { AssetStore } from '../services/asset-store.js';
 
 const identifier = /^[A-Za-z0-9_-]+$/;
 
-export function registerPublicationRoutes(app: FastifyInstance, drafts: DraftRepository, publications: PublicationRepository, gateRunner?: ReleaseGateRunner): void {
+export function registerPublicationRoutes(
+  app: FastifyInstance,
+  drafts: DraftRepository,
+  publications: PublicationRepository,
+  gateRunner?: ReleaseGateRunner,
+  assets?: AssetRepository,
+  assetStore?: AssetStore
+): void {
   app.post('/', { bodyLimit: 256 * 1024, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
     const body = request.body as { draftId?: unknown } | null;
     if (!body || typeof body.draftId !== 'string' || !identifier.test(body.draftId)) {
       return reply.code(400).send({ ok: false, error: { code: 'input.invalid', message: 'Valid draftId is required' } });
     }
-    const result = await publishDraft(body.draftId, drafts, publications, gateRunner);
+    const result = await publishDraft(body.draftId, drafts, publications, gateRunner, assets, assetStore);
     if (result.kind === 'missing') return reply.code(404).send({ ok: false, error: { code: 'draft.not_found', message: 'Draft not found' } });
     if (result.kind === 'conflict') return reply.code(409).send({ ok: false, error: { code: 'publication.conflict', message: 'Confirm a new draft before publishing' } });
     if (result.kind === 'invalid') return reply.code(422).send({ ok: false, error: { code: 'publication.gate_failed', message: 'Release gate failed' }, gates: result.gates });

@@ -21,14 +21,14 @@ const emit = defineEmits<{
 
 const summary = computed(() => {
   const propsRecord = props.node.props;
-  for (const key of ['title', 'label', 'placeholder', 'text']) {
+  for (const key of ['title', 'label', 'placeholder', 'text', 'alt']) {
     const value = propsRecord[key];
     if (typeof value === 'string' && value) return value;
   }
   return props.node.id;
 });
 const childSlots = computed(() => props.node.slots.flatMap((slot) => 'children' in slot ? [{ name: slot.name, children: slot.children }] : []));
-const acceptsChildren = computed(() => ['Card', 'Form', 'FormItem', 'Row', 'Col', 'PageHeader'].includes(props.node.type));
+const acceptsChildren = computed(() => ['Card', 'Form', 'FormItem', 'Row', 'Col', 'PageHeader', 'ContentSection'].includes(props.node.type));
 const dropIndex = computed(() => props.node.type === 'PageHeader'
   ? childSlots.value.find((slot) => slot.name === 'tags')?.children.length ?? 0
   : props.node.children.length);
