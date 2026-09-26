@@ -38,11 +38,9 @@ function endpoint(config: ImageModelConfig): string {
   }
 }
 
-async function safeFetch(fetchImpl: typeof fetch, url: string, init: RequestInit, pin?: { address: string; servername?: string }): Promise<Response> {
+async function safeFetch(fetchImpl: typeof fetch, url: string, init: RequestInit): Promise<Response> {
   try {
-    return pin
-      ? await (fetchImpl as unknown as (input: string, requestInit: RequestInit, target: typeof pin) => Promise<Response>)(url, init, pin)
-      : await fetchImpl(url, init);
+    return await fetchImpl(url, init);
   } catch (error) {
     if (error instanceof Error && ['AbortError', 'TimeoutError'].includes(error.name)) {
       throw new ModelAdapterError('timeout', 'Image request timed out');
@@ -116,6 +114,7 @@ function isPublicIp(ip: string): boolean {
 }
 
 type PinnedTarget = { url: string; address: string; servername?: string };
+type PinnedResultDownload = (target: PinnedTarget, signal: AbortSignal) => Promise<Response>;
 
 async function validateResultUrl(value: string, allowedHosts: readonly string[], resolveResultHost: typeof lookup): Promise<PinnedTarget> {
   let url: URL;
@@ -287,7 +286,7 @@ function validatePng(bytes: Uint8Array, requestId?: string): ImageResult {
 export async function generateImage(
   prompt: string,
   config: ImageModelConfig,
-  dependencies: { resolveResultHost?: typeof lookup } = {}
+  dependencies: { resolveResultHost?: typeof lookup; downloadPinnedResult?: PinnedResultDownload } = {}
 ): Promise<ImageResult> {
   const url = endpoint(config);
   if (!prompt?.trim() || prompt.length > MAX_PROMPT_CHARS) invalid('Image prompt is required and must be at most 4000 characters');
@@ -313,8 +312,8 @@ export async function generateImage(
     if (bytes.length > MAX_BYTES) invalid('Image exceeds size limit');
   } else {
     const target = await validateResultUrl(source.value, config.allowedResultHosts, dependencies.resolveResultHost ?? lookup);
-    const downloaded = config.fetchImpl
-      ? await safeFetch(fetchImpl, target.url, { method: 'GET', redirect: 'manual', signal }, { address: target.address, servername: target.servername })
+    const downloaded = dependencies.downloadPinnedResult
+      ? await dependencies.downloadPinnedResult(target, signal)
       : await pinnedHttpFetch(target, signal);
     if (!downloaded.ok || downloaded.status >= 300) throw new ModelAdapterError('http', `Image download failed with HTTP ${downloaded.status}`, downloaded.status);
     bytes = await readLimited(downloaded, MAX_BYTES);

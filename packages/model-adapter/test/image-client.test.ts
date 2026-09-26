@@ -70,17 +70,20 @@ describe('generateImage', () => {
     expect(JSON.parse(String(init.body))).toMatchObject({ model: 'qwen-image-2.0', prompt: 'Draw a flower', n: 1 });
   });
 
-  it('downloads an allowlisted public URL without following redirects', async () => {
+  it('keeps generic fetch on provider POST and gives the pinned downloader the validated target', async () => {
     const resultUrl = 'https://images.example/image.png';
-    const fetchImpl = vi.fn(async (url: string) => url === baseConfig.endpointUrl
-      ? imageResponse({ data: [{ url: resultUrl }] })
-      : new Response(png, { headers: { 'content-type': 'image/png' } }));
+    const fetchImpl = vi.fn(async () => imageResponse({ data: [{ url: resultUrl }] }));
+    const downloadPinnedResult = vi.fn(async () => new Response(png, { headers: { 'content-type': 'image/png' } }));
     const resolveImpl = vi.fn(async () => [{ address: '8.8.8.8', family: 4 as const }]);
-    const result = await generateImage('Draw', { ...baseConfig, allowedResultHosts: ['images.example'], fetchImpl: fetchImpl as typeof fetch }, { resolveResultHost: resolveImpl as never });
+    const result = await generateImage('Draw', { ...baseConfig, allowedResultHosts: ['images.example'], fetchImpl: fetchImpl as typeof fetch }, {
+      resolveResultHost: resolveImpl as never,
+      downloadPinnedResult
+    });
     expect(result.bytes).toEqual(png);
-    expect(fetchImpl.mock.calls[1][0]).toBe(resultUrl);
-    expect((fetchImpl.mock.calls[1][1] as RequestInit).redirect).toBe('manual');
-    expect(fetchImpl.mock.calls[1][2]).toEqual({ address: '8.8.8.8', servername: 'images.example' });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(fetchImpl.mock.calls[0][0]).toBe(baseConfig.endpointUrl);
+    expect(downloadPinnedResult).toHaveBeenCalledOnce();
+    expect(downloadPinnedResult).toHaveBeenCalledWith({ url: resultUrl, address: '8.8.8.8', servername: 'images.example' }, expect.any(AbortSignal));
     expect(resolveImpl).toHaveBeenCalledWith('images.example', { all: true });
   });
 
@@ -92,12 +95,21 @@ describe('generateImage', () => {
 
   it('uses the native DashScope multimodal request and image response shape', async () => {
     const fetchImpl = vi.fn(async () => imageResponse({ output: { choices: [{ message: { content: [{ image: 'https://8.8.8.8/image.png' }] } }] } }));
-    fetchImpl.mockResolvedValueOnce(imageResponse({ output: { choices: [{ message: { content: [{ image: 'https://8.8.8.8/image.png' }] } }] } }));
-    fetchImpl.mockResolvedValueOnce(new Response(png));
-    await generateImage('Draw', { ...baseConfig, mode: 'dashscope-native', fetchImpl: fetchImpl as typeof fetch });
+    const downloadPinnedResult = vi.fn(async () => new Response(png));
+    await generateImage('Draw', { ...baseConfig, mode: 'dashscope-native', fetchImpl: fetchImpl as typeof fetch }, { downloadPinnedResult });
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(downloadPinnedResult).toHaveBeenCalledWith({ url: 'https://8.8.8.8/image.png', address: '8.8.8.8' }, expect.any(AbortSignal));
     const request = JSON.parse(String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body));
     expect(request).toMatchObject({ model: 'qwen-image-2.0', input: { messages: [{ role: 'user', content: [{ text: 'Draw' }] }] } });
   });
+
+  it.each([{}, { output: { choices: [{ message: { content: [] } }] } }])(
+    'rejects malformed DashScope response envelopes', async (body) => {
+      await expect(generateImage('Draw', {
+        ...baseConfig, mode: 'dashscope-native', fetchImpl: async () => imageResponse(body)
+      })).rejects.toMatchObject({ code: 'invalid_schema' });
+    }
+  );
 
   it('reports HTTP errors without exposing response content or credentials', async () => {
     await expect(generateImage('Draw', { ...baseConfig, fetchImpl: async () => new Response('private-test-key', { status: 429 }) }))
@@ -149,16 +161,16 @@ describe('generateImage', () => {
 
   it('rejects a redirect from the result URL', async () => {
     const fetchImpl = vi.fn(async () => imageResponse({ data: [{ url: 'https://8.8.8.8/a' }] }));
-    fetchImpl.mockResolvedValueOnce(imageResponse({ data: [{ url: 'https://8.8.8.8/a' }] }));
-    fetchImpl.mockResolvedValueOnce(new Response(null, { status: 302, headers: { location: 'https://8.8.8.8/b' } }));
-    await expect(generateImage('Draw', { ...baseConfig, fetchImpl })).rejects.toMatchObject({ code: 'http', status: 302 });
+    const downloadPinnedResult = vi.fn(async () => new Response(null, { status: 302, headers: { location: 'https://8.8.8.8/b' } }));
+    await expect(generateImage('Draw', { ...baseConfig, fetchImpl }, { downloadPinnedResult }))
+      .rejects.toMatchObject({ code: 'http', status: 302 });
   });
 
   it('rejects downloads larger than 20 MiB before reading the body', async () => {
     const fetchImpl = vi.fn(async () => imageResponse({ data: [{ url: 'https://8.8.8.8/a' }] }));
-    fetchImpl.mockResolvedValueOnce(imageResponse({ data: [{ url: 'https://8.8.8.8/a' }] }));
-    fetchImpl.mockResolvedValueOnce(new Response(png, { headers: { 'content-length': String(20 * 1024 * 1024 + 1) } }));
-    await expect(generateImage('Draw', { ...baseConfig, fetchImpl })).rejects.toMatchObject({ code: 'invalid_schema' });
+    const downloadPinnedResult = vi.fn(async () => new Response(png, { headers: { 'content-length': String(20 * 1024 * 1024 + 1) } }));
+    await expect(generateImage('Draw', { ...baseConfig, fetchImpl }, { downloadPinnedResult }))
+      .rejects.toMatchObject({ code: 'invalid_schema' });
   });
 
   it('rejects images over the pixel cap', async () => {
@@ -170,6 +182,64 @@ describe('generateImage', () => {
   it('maps aborts to timeout errors', async () => {
     await expect(generateImage('Draw', { ...baseConfig, fetchImpl: async () => { throw new DOMException('late', 'TimeoutError'); } }))
       .rejects.toMatchObject({ code: 'timeout' });
+  });
+
+  it('maps ordinary transport failures to network errors', async () => {
+    await expect(generateImage('Draw', { ...baseConfig, fetchImpl: async () => { throw new TypeError('offline'); } }))
+      .rejects.toMatchObject({ code: 'network' });
+  });
+
+  it.each([
+    { ...baseConfig, mode: 'unknown' },
+    { ...baseConfig, timeoutMs: Number.NaN },
+    { ...baseConfig, allowedResultHosts: null },
+    { ...baseConfig, endpointUrl: 'ftp://model.example/images' }
+  ])('rejects invalid image endpoint configuration before fetch', async (config) => {
+    const fetchImpl = vi.fn();
+    await expect(generateImage('Draw', { ...config, fetchImpl } as unknown as ImageModelConfig))
+      .rejects.toMatchObject({ code: 'config' });
+    expect(fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it('rejects an empty response body and omits an absent request ID from a valid result', async () => {
+    await expect(generateImage('Draw', { ...baseConfig, fetchImpl: async () => new Response(null) }))
+      .rejects.toMatchObject({ code: 'invalid_schema' });
+    const withoutRequestId = await generateImage('Draw', { ...baseConfig, fetchImpl: async () => new Response(JSON.stringify({
+      data: [{ b64_json: Buffer.from(png).toString('base64') }]
+    })) });
+    expect(withoutRequestId).not.toHaveProperty('requestId');
+  });
+
+  it('pins a resolved allowlisted hostname and rejects private DNS answers', async () => {
+    const fetchImpl = vi.fn(async () => imageResponse({ data: [{ url: 'https://images.example/image.png' }] }));
+    const downloadPinnedResult = vi.fn(async () => new Response(png));
+    const resolveResultHost = vi.fn(async () => [{ address: '8.8.8.8', family: 4 }]);
+    const result = await generateImage('Draw', {
+      ...baseConfig, allowedResultHosts: ['images.example'], fetchImpl: fetchImpl as typeof fetch
+    }, { resolveResultHost: resolveResultHost as never, downloadPinnedResult });
+    expect(result.bytes).toEqual(png);
+    expect(fetchImpl).toHaveBeenCalledOnce();
+    expect(resolveResultHost).toHaveBeenCalledWith('images.example', { all: true });
+    expect(downloadPinnedResult).toHaveBeenCalledWith({
+      url: 'https://images.example/image.png', address: '8.8.8.8', servername: 'images.example'
+    }, expect.any(AbortSignal));
+
+    await expect(generateImage('Draw', {
+      ...baseConfig, allowedResultHosts: ['images.example'],
+      fetchImpl: async () => imageResponse({ data: [{ url: 'https://images.example/image.png' }] })
+    }, { resolveResultHost: async () => [{ address: '10.0.0.2', family: 4 }] as never }))
+      .rejects.toMatchObject({ code: 'invalid_schema' });
+  });
+
+  it('rejects empty or failed DNS resolution for an allowlisted result host', async () => {
+    const fetchImpl = async () => imageResponse({ data: [{ url: 'https://images.example/image.png' }] });
+    await expect(generateImage('Draw', {
+      ...baseConfig, allowedResultHosts: ['images.example'], fetchImpl
+    }, { resolveResultHost: async () => [] as never })).rejects.toMatchObject({ code: 'invalid_schema' });
+    await expect(generateImage('Draw', {
+      ...baseConfig, allowedResultHosts: ['images.example'], fetchImpl
+    }, { resolveResultHost: (async () => { throw new Error('DNS unavailable'); }) as never }))
+      .rejects.toMatchObject({ code: 'network' });
   });
 
   it('rejects missing configuration before fetch', async () => {
