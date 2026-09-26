@@ -26,7 +26,7 @@ const PreviewContent = defineComponent({ setup() { return () => renderPage(props
 .preview-panel__header h2{font-size:var(--pf-font-size-lg);font-weight:600;color:var(--pf-color-text);margin:0}
 .preview-panel__header span{font-size:var(--pf-font-size-sm);color:var(--pf-color-text-secondary)}
 .preview-panel__error{color:var(--pf-color-error-text);margin:var(--pf-space-4)}
-.preview-panel__event{display:inline-block;margin:0 var(--pf-space-4) var(--pf-space-4);background:#e6f4ff;color:var(--pf-color-primary);padding:var(--pf-space-1) var(--pf-space-2);border-radius:var(--pf-radius-sm);font-size:var(--pf-font-size-sm)}
+.preview-panel__event{display:inline-block;margin:0 var(--pf-space-4) var(--pf-space-4);background:#e6f4ff;color:var(--pf-color-primary-strong);padding:var(--pf-space-1) var(--pf-space-2);border-radius:var(--pf-radius-sm);font-size:var(--pf-font-size-sm)}
 .preview-panel :deep(.pulseflow-preview){display:grid;gap:var(--pf-space-4);min-width:0;margin:var(--pf-space-4);padding:var(--pf-space-5);background:var(--pf-color-surface);border:var(--pf-border-width) solid var(--pf-color-border);border-radius:var(--pf-radius);box-shadow:var(--pf-shadow-sm);overflow-x:auto}
 .preview-panel :deep(.pulseflow-page-header){display:flex;justify-content:space-between;align-items:flex-start;gap:var(--pf-space-3);border-bottom:var(--pf-border-width) solid var(--pf-color-border-secondary);padding-bottom:var(--pf-space-4)}
 .preview-panel :deep(.pulseflow-page-header h1){font-size:20px;font-weight:600;color:var(--pf-color-text);margin:0}

@@ -35,11 +35,11 @@ const emit = defineEmits<{ 'update:fieldsText': [value: string]; 'update:dslText
 .questions .muted { margin: 0 0 var(--pf-space-4); color: var(--pf-color-text-secondary); }
 .questions .field-group + .field-group { margin-top: var(--pf-space-4); }
 .success, .error { margin: var(--pf-space-4) 0 0; padding: var(--pf-space-2) var(--pf-space-3); border: var(--pf-border-width) solid; border-radius: var(--pf-radius); overflow-wrap: anywhere; }
-.success { color: #237804; background: #f6ffed; border-color: #b7eb8f; }
-.error { color: #a8071a; background: #fff2f0; border-color: #ffccc7; }
+.success { color: var(--pf-color-success-text); background: #f6ffed; border-color: #b7eb8f; }
+.error { color: var(--pf-color-error-text); background: #fff2f0; border-color: #ffccc7; }
 .action-row { display: flex; justify-content: flex-end; margin-top: var(--pf-space-5); }
-.btn { min-height: 36px; margin: 0; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid #0958d9; border-radius: var(--pf-radius); background: #0958d9; color: #fff; font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
-.btn:hover { border-color: #003eb3; background: #003eb3; color: #fff; }
+.btn { min-height: 36px; margin: 0; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid var(--pf-color-primary-strong); border-radius: var(--pf-radius); background: var(--pf-color-primary-strong); color: #fff; font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
+.btn:hover { border-color: var(--pf-color-primary-strong-hover); background: var(--pf-color-primary-strong-hover); color: #fff; }
 .btn:focus-visible { outline: 2px solid var(--pf-color-primary); outline-offset: 2px; }
 @media (max-width: 560px) { .editor-card { padding: var(--pf-space-4); } .action-row .btn { width: 100%; } }
 </style>

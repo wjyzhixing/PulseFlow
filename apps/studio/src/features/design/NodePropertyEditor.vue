@@ -49,7 +49,7 @@ function updateBoolean(key: string, event: Event) { emit('update', { [key]: (eve
 .section-kicker{font-size:var(--pf-font-size-sm);font-weight:500;color:var(--pf-color-text-secondary)}
 .property-editor h2{font-size:var(--pf-font-size-lg);font-weight:600;margin:var(--pf-space-1) 0 var(--pf-space-4)}
 .node-identity{display:flex;justify-content:space-between;align-items:center;gap:var(--pf-space-2);padding:var(--pf-space-2) var(--pf-space-3);background:#e6f4ff;color:var(--pf-color-text);border-radius:var(--pf-radius-sm);margin-bottom:var(--pf-space-3);min-width:0}
-.node-identity span{font-size:var(--pf-font-size-sm);font-weight:600;color:var(--pf-color-primary)}.node-identity code,.property-field code{font-size:var(--pf-font-size-sm);overflow-wrap:anywhere}
+.node-identity span{font-size:var(--pf-font-size-sm);font-weight:600;color:var(--pf-color-primary-strong)}.node-identity code,.property-field code{font-size:var(--pf-font-size-sm);overflow-wrap:anywhere}
 .property-field{display:block;margin:var(--pf-space-3) 0;min-width:0}.property-field>span{display:flex;justify-content:space-between;gap:var(--pf-space-2);font-size:var(--pf-font-size-sm);font-weight:500;margin-bottom:var(--pf-space-1)}.property-field>span code{color:var(--pf-color-text-secondary);font-weight:400}
 .property-field input:not(.check),.property-field select{width:100%;min-width:0;height:32px;border:var(--pf-border-width) solid var(--pf-color-border);background:var(--pf-color-surface);padding:0 var(--pf-space-2);color:var(--pf-color-text);border-radius:var(--pf-radius-sm);font-size:var(--pf-font-size-sm)}
 .property-field input:focus,.property-field select:focus{outline:2px solid #e6f4ff;border-color:var(--pf-color-primary)}

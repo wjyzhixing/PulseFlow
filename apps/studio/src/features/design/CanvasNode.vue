@@ -112,16 +112,16 @@ const dropIndex = computed(() => props.node.type === 'PageHeader'
 .canvas-node:focus-visible{outline:2px solid var(--pf-color-primary);outline-offset:2px}
 .node-face{display:grid;grid-template-columns:24px auto minmax(0,1fr) auto;gap:var(--pf-space-2);align-items:center;padding:var(--pf-space-2) var(--pf-space-3);min-width:0}
 .node-index{font-size:var(--pf-font-size-sm);color:var(--pf-color-text-secondary)}
-.node-type{font-size:var(--pf-font-size-sm);font-weight:600;background:#e6f4ff;color:var(--pf-color-primary);padding:var(--pf-space-1) var(--pf-space-2);border-radius:var(--pf-radius-sm)}
+.node-type{font-size:var(--pf-font-size-sm);font-weight:600;background:#e6f4ff;color:var(--pf-color-primary-strong);padding:var(--pf-space-1) var(--pf-space-2);border-radius:var(--pf-radius-sm)}
 .node-summary{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:var(--pf-font-size-sm);font-weight:500}
 .node-actions{display:flex;gap:var(--pf-space-1)}
 .node-actions button{width:28px;height:28px;border:var(--pf-border-width) solid var(--pf-color-border);background:var(--pf-color-surface);color:var(--pf-color-text-secondary);border-radius:var(--pf-radius-sm);cursor:pointer}
-.node-actions button:hover:not(:disabled){border-color:var(--pf-color-primary);color:var(--pf-color-primary)}
+.node-actions button:hover:not(:disabled){border-color:var(--pf-color-primary);color:var(--pf-color-primary-strong)}
 .node-actions button:focus-visible{outline:2px solid var(--pf-color-primary);outline-offset:1px}
 .node-actions button:disabled{opacity:.4;cursor:not-allowed}.node-actions .remove:hover{border-color:var(--pf-color-error);color:var(--pf-color-error-text)}
 .node-children{min-width:0;padding:0 var(--pf-space-2) var(--pf-space-2) var(--pf-space-2);border-top:var(--pf-border-width) solid var(--pf-color-border-secondary)}
 .slot-children{padding-top:var(--pf-space-2)}.slot-label{display:block;margin:0 0 var(--pf-space-1) var(--pf-space-2);color:var(--pf-color-text-secondary);font-size:var(--pf-font-size-sm)}
 .drop-target{margin:var(--pf-space-2);padding:var(--pf-space-2);border:var(--pf-border-width) dashed var(--pf-color-border);border-radius:var(--pf-radius-sm);color:var(--pf-color-text-secondary);text-align:center;font-size:var(--pf-font-size-sm)}
-.drop-target:hover{border-color:var(--pf-color-primary);background:#e6f4ff;color:var(--pf-color-primary)}
+.drop-target:hover{border-color:var(--pf-color-primary);background:#e6f4ff;color:var(--pf-color-primary-strong)}
 @media(max-width:760px){.canvas-node{margin-left:calc(var(--node-depth) * 8px)}.node-face{grid-template-columns:auto minmax(0,1fr) auto;gap:var(--pf-space-1);padding:var(--pf-space-2)}.node-index{display:none}.node-actions button{width:26px;height:26px}}
 </style>

@@ -198,7 +198,7 @@ async function publish() {
 <style scoped>
 .design-studio{width:min(1480px,100%);min-width:0;margin:0 auto;color:var(--pf-color-text)}
 .design-header{display:flex;justify-content:space-between;align-items:center;gap:var(--pf-space-5);margin-bottom:var(--pf-space-5)}
-.design-kicker{font-size:var(--pf-font-size-sm);font-weight:600;letter-spacing:.04em;color:var(--pf-color-primary)}
+.design-kicker{font-size:var(--pf-font-size-sm);font-weight:600;letter-spacing:.04em;color:var(--pf-color-primary-strong)}
 .design-header h1{font-size:24px;line-height:1.35;font-weight:600;margin:var(--pf-space-1) 0}
 .design-header p{color:var(--pf-color-text-secondary);font-size:var(--pf-font-size-sm);margin:0}
 .design-meta{display:grid;grid-template-columns:auto minmax(0,1fr);gap:var(--pf-space-1) var(--pf-space-3);border:var(--pf-border-width) solid var(--pf-color-border-secondary);border-radius:var(--pf-radius);padding:var(--pf-space-2) var(--pf-space-3);background:var(--pf-color-surface);min-width:180px;max-width:100%}

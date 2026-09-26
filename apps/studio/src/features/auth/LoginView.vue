@@ -45,10 +45,10 @@ async function login() {
 .input { min-height: 40px; padding: var(--pf-space-2) var(--pf-space-3); border: var(--pf-border-width) solid var(--pf-color-border); border-radius: var(--pf-radius); color: var(--pf-color-text); font: inherit; }
 .input:hover { border-color: var(--pf-color-primary-hover); }
 .input:focus { border-color: var(--pf-color-primary); outline: 2px solid rgba(22, 119, 255, .16); outline-offset: 0; }
-.error { margin: var(--pf-space-3) 0 0; padding: var(--pf-space-2) var(--pf-space-3); color: #a8071a; background: #fff2f0; border: var(--pf-border-width) solid #ffccc7; border-radius: var(--pf-radius); }
+.error { margin: var(--pf-space-3) 0 0; padding: var(--pf-space-2) var(--pf-space-3); color: var(--pf-color-error-text); background: #fff2f0; border: var(--pf-border-width) solid #ffccc7; border-radius: var(--pf-radius); }
 .action-row { display: flex; justify-content: flex-end; margin-top: var(--pf-space-5); }
-.btn { min-height: 36px; margin: 0; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid #0958d9; border-radius: var(--pf-radius); background: #0958d9; color: #fff; font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
-.btn:hover { border-color: #003eb3; background: #003eb3; color: #fff; }
+.btn { min-height: 36px; margin: 0; padding: var(--pf-space-1) var(--pf-space-4); border: var(--pf-border-width) solid var(--pf-color-primary-strong); border-radius: var(--pf-radius); background: var(--pf-color-primary-strong); color: #fff; font: inherit; font-weight: 400; box-shadow: var(--pf-shadow-sm); }
+.btn:hover { border-color: var(--pf-color-primary-strong-hover); background: var(--pf-color-primary-strong-hover); color: #fff; }
 .btn:focus-visible { outline: 2px solid var(--pf-color-primary); outline-offset: 2px; }
 .btn:disabled { opacity: .55; cursor: not-allowed; }
 @media (max-width: 560px) { .login-card { padding: var(--pf-space-4); } .action-row .btn { width: 100%; } }

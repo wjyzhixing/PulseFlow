@@ -65,7 +65,7 @@ function updateFormat(field: DesignEntityField, event: Event): void {
 .field-editor__header{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:var(--pf-space-2);margin-bottom:var(--pf-space-3)}
 .section-kicker{font-size:var(--pf-font-size-sm);font-weight:500;color:var(--pf-color-text-secondary)}
 .field-editor h2{font-size:var(--pf-font-size-lg);font-weight:600;margin:var(--pf-space-1) 0 0}
-.add-field,.remove-field{border:var(--pf-border-width) solid var(--pf-color-primary);background:var(--pf-color-surface);color:var(--pf-color-primary);border-radius:var(--pf-radius-sm);padding:var(--pf-space-1) var(--pf-space-3);font-size:var(--pf-font-size-sm);font-weight:500;cursor:pointer}
+.add-field,.remove-field{border:var(--pf-border-width) solid var(--pf-color-primary);background:var(--pf-color-surface);color:var(--pf-color-primary-strong);border-radius:var(--pf-radius-sm);padding:var(--pf-space-1) var(--pf-space-3);font-size:var(--pf-font-size-sm);font-weight:500;cursor:pointer}
 .add-field:hover{background:#e6f4ff}.add-field:focus-visible,.remove-field:focus-visible{outline:2px solid var(--pf-color-primary);outline-offset:2px}
 .field-row{padding:var(--pf-space-3) 0;border-top:var(--pf-border-width) solid var(--pf-color-border-secondary)}
 .field-row__identity{display:flex;justify-content:space-between;gap:var(--pf-space-2);margin-bottom:var(--pf-space-2);min-width:0}.field-row__identity strong{font-size:var(--pf-font-size-sm)}.field-row__identity code{font-size:var(--pf-font-size-sm);color:var(--pf-color-text-secondary);overflow-wrap:anywhere}
