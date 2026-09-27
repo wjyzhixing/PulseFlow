@@ -66,7 +66,7 @@ function send() {
     <section v-if="imageReview" class="design-chat__image-review" data-testid="image-review" aria-labelledby="image-review-title" :aria-busy="imageReview.status === 'generating'">
       <div class="design-chat__image-heading">
         <h3 id="image-review-title">图片生成预览</h3>
-        <p data-testid="image-cost-notice">每次生成或重新生成图片可能产生费用。<a data-testid="image-model-catalog" href="https://tokenrhythm.studio/models" target="_blank" rel="noopener noreferrer">查看模型目录与价格</a></p>
+        <p data-testid="image-cost-notice">每次生成或重新生成图片可能产生费用，请在已配置的模型服务控制台查看价格与配额。</p>
       </div>
       <p v-if="imageReview.status === 'generating'" class="design-chat__image-status" data-testid="image-review-status" role="status">正在生成图片，请稍候…</p>
       <p v-else-if="imageReview.status === 'failed'" class="design-chat__image-status is-error" data-testid="image-review-status" role="alert">{{ imageReview.message || '图片生成失败，请重试。' }}</p>

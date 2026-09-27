@@ -23,7 +23,8 @@ describe('DesignChatPanel image review', () => {
     expect(wrapper.get('[data-testid="image-review"]').attributes('aria-busy')).toBe('true');
     expect(wrapper.get('[data-testid="image-review-status"]').text()).toContain('正在生成图片');
     expect(wrapper.get('[data-testid="image-cost-notice"]').text()).toContain('可能产生费用');
-    expect(wrapper.get('[data-testid="image-model-catalog"]').attributes('href')).toBe('https://tokenrhythm.studio/models');
+    expect(wrapper.get('[data-testid="image-cost-notice"]').text()).toContain('已配置的模型服务控制台');
+    expect(wrapper.find('[data-testid="image-model-catalog"]').exists()).toBe(false);
     expect(wrapper.find('button[data-image-action]').exists()).toBe(false);
   });
 
