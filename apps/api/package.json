@@ -4,7 +4,7 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/server.ts",
+    "dev": "node --env-file=../../.env --import ./node_modules/tsx/dist/loader.mjs --watch src/server.ts",
     "e2e:server": "tsx ../../tests/e2e/fixtures/api-server.ts",
     "build": "tsc -p tsconfig.json && node -e \"require('node:fs').copyFileSync('src/db/schema.sql', 'dist/db/schema.sql')\"",
     "typecheck": "tsc --noEmit -p tsconfig.json",
