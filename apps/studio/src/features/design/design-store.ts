@@ -330,7 +330,9 @@ export function createDesignStore(options: {
       if (node.type === 'Image' && node.props.assetId === assetId) { changed = true; return null; }
       if ((node.type === 'Hero' || node.type === 'ContentSection') && node.props.backgroundAssetId === assetId) {
         changed = true;
-        const { backgroundAssetId: _asset, backgroundOverlay: _overlay, ...props } = node.props;
+        const props = Object.fromEntries(
+          Object.entries(node.props).filter(([key]) => key !== 'backgroundAssetId' && key !== 'backgroundOverlay'),
+        );
         return { ...node, props };
       }
       return node;
