@@ -1,20 +1,37 @@
 import type { FastifyInstance } from 'fastify';
-import { generateDraft, generateImage, loadImageModelConfig, loadModelConfig, ModelAdapterError, refineDraft, type ImageModelConfig, type ModelConfig, type RefineDraftResult } from '@pulseflow/model-adapter';
+import { extractImageRegionCrops, generateDraft, generateImage, importImageToDsl, loadImageModelConfig, loadModelConfig, loadVisionModelConfig, ModelAdapterError, refineDraft, type ImageModelConfig, type ImageRegionCrop, type ImageToDslInput, type ModelConfig, type RefineDraftResult } from '@pulseflow/model-adapter';
 import type { RequirementSection } from '@pulseflow/requirement-import';
 import { getImageAsset, validatePageDsl, type EntityField, type PageDsl, type SemanticQuestion, type UiNode } from '@pulseflow/ui-dsl';
 import { DraftRepository, InvalidDraftError } from '../db/draft-repository.js';
 import { AssetRepository, type AssetSummary } from '../db/asset-repository.js';
 import { parseDraft } from '../services/draft-service.js';
 import { AssetStore } from '../services/asset-store.js';
+import type { StudioSkillScope } from '../services/skill-library.js';
 import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
+
+const pageIdentifier = /^[A-Za-z0-9_-]+$/;
+
+function collectNodes(page: PageDsl): UiNode[] {
+  const output: UiNode[] = [];
+  const pending = [...page.nodes];
+  while (pending.length) {
+    const node = pending.pop();
+    if (!node) continue;
+    output.push(node);
+    pending.push(...node.children);
+    for (const slot of node.slots) if ('children' in slot) pending.push(...slot.children);
+  }
+  return output;
+}
 
 function draftError(error: InvalidDraftError) {
   return { ok: false, error: { code: 'draft.invalid', message: error.message }, diagnostics: error.diagnostics };
 }
 
-function modelError(error: ModelAdapterError): { status: 502 | 503 | 504; code: string; message: string } {
+function modelError(error: ModelAdapterError): { status: 400 | 502 | 503 | 504; code: string; message: string } {
   switch (error.code) {
+    case 'input': return { status: 400, code: 'input.invalid', message: error.message };
     case 'config': return { status: 503, code: 'generation.config', message: 'Model service is not configured. Ask an administrator to configure it.' };
     case 'timeout': return { status: 504, code: 'generation.timeout', message: 'Model request timed out. Try again.' };
     case 'network': return { status: 502, code: 'generation.network', message: 'Model service is unavailable. Try again.' };
@@ -38,6 +55,7 @@ interface RefineBody {
   entityFields: EntityField[];
   pageDsl: PageDsl;
   semanticQuestions: SemanticQuestion[];
+  targetNodeIds?: string[];
   draftId?: string;
   expectedRevision?: string;
 }
@@ -89,13 +107,15 @@ function parseRefineBody(value: unknown): RefineBody | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   if (JSON.stringify(value).length > MAX_REFINE_BODY_CHARS) return null;
   const body = value as Record<string, unknown>;
-  if (Object.keys(body).some((key) => !['instruction', 'entityFields', 'pageDsl', 'semanticQuestions', 'draftId', 'expectedRevision'].includes(key)) ||
+  if (Object.keys(body).some((key) => !['instruction', 'entityFields', 'pageDsl', 'semanticQuestions', 'targetNodeIds', 'draftId', 'expectedRevision'].includes(key)) ||
     typeof body.instruction !== 'string' || !body.instruction.trim() || body.instruction.length > 2_000 ||
     !Array.isArray(body.entityFields) || body.entityFields.length > MAX_REFINE_FIELDS ||
     !Array.isArray(body.semanticQuestions) || body.semanticQuestions.length > MAX_REFINE_QUESTIONS ||
     (body.draftId !== undefined && (typeof body.draftId !== 'string' || !/^[A-Za-z0-9_-]+$/.test(body.draftId))) ||
     (body.expectedRevision !== undefined && (typeof body.expectedRevision !== 'string' || body.expectedRevision.length > 128)) ||
     (body.expectedRevision !== undefined && body.draftId === undefined) ||
+    (body.targetNodeIds !== undefined && (!Array.isArray(body.targetNodeIds) || body.targetNodeIds.length > MAX_REFINE_NODES ||
+      !body.targetNodeIds.every((id) => typeof id === 'string' && /^[A-Za-z0-9_-]+$/.test(id)))) ||
     !body.semanticQuestions.every(isSemanticQuestion) || !withinNodeBudget(body.pageDsl)) return null;
   const page = validatePageDsl(body.pageDsl, body.entityFields as EntityField[]);
   if (!page.ok) return null;
@@ -104,6 +124,7 @@ function parseRefineBody(value: unknown): RefineBody | null {
     entityFields: body.entityFields as EntityField[],
     pageDsl: page.dsl,
     semanticQuestions: body.semanticQuestions,
+    ...(Array.isArray(body.targetNodeIds) ? { targetNodeIds: [...new Set(body.targetNodeIds as string[])] } : {}),
     ...(typeof body.draftId === 'string' ? { draftId: body.draftId } : {}),
     ...(typeof body.expectedRevision === 'string' ? { expectedRevision: body.expectedRevision } : {})
   };
@@ -158,7 +179,7 @@ function insertImage(page: PageDsl, plan: NonNullable<RefineDraftResult['imagePl
       const node = nodes[index];
       if (node.id === plan.targetNodeId) {
         if (node.type === 'Image') return { nodes: nodes.map((item, itemIndex) => itemIndex === index ? { ...node, props: { ...node.props, assetId } } : item), found: true };
-        if (node.type === 'ContentSection') {
+        if (node.type === 'ContentSection' || node.type === 'Frame') {
           return { nodes: nodes.map((item, itemIndex) => itemIndex === index ? { ...node, children: [...node.children, image] } : item), found: true };
         }
         return { nodes: [...nodes.slice(0, index + 1), image, ...nodes.slice(index + 1)], found: true };
@@ -172,6 +193,41 @@ function insertImage(page: PageDsl, plan: NonNullable<RefineDraftResult['imagePl
   const applied = plan.placement === 'background' ? applyBackground(page.nodes) : insertInline(page.nodes);
   if (!applied.found) throw new Error('Image plan target disappeared before application');
   return { ...page, nodes: applied.nodes };
+}
+
+function preserveRegisteredImageAssets(currentPage: PageDsl, candidatePage: PageDsl): PageDsl {
+  const currentNodes = new Map<string, UiNode>();
+  const knownAssetIds = new Set(['asset-workflow', 'asset-analytics', 'asset-collaboration']);
+  const collect = (nodes: readonly UiNode[]) => {
+    for (const node of nodes) {
+      currentNodes.set(node.id, node);
+      for (const key of ['assetId', 'backgroundAssetId']) {
+        const assetId = node.props[key];
+        if (typeof assetId === 'string') knownAssetIds.add(assetId);
+      }
+      collect(node.children);
+      for (const slot of node.slots) if ('children' in slot) collect(slot.children);
+    }
+  };
+  collect(currentPage.nodes);
+
+  const sanitize = (nodes: readonly UiNode[]): UiNode[] => nodes.flatMap((node) => {
+    const previous = currentNodes.get(node.id);
+    let props = node.props;
+    for (const key of ['assetId', 'backgroundAssetId']) {
+      const assetId = props[key];
+      if (typeof assetId !== 'string' || knownAssetIds.has(assetId) || getImageAsset(assetId)) continue;
+      if (props === node.props) props = { ...props };
+      const previousAssetId = previous?.props[key];
+      if (typeof previousAssetId === 'string') props[key] = previousAssetId;
+      else delete props[key];
+    }
+    if (node.type === 'Image' && typeof props.assetId !== 'string') return [];
+    const slots = node.slots.map((slot) => 'children' in slot ? { ...slot, children: sanitize(slot.children) } : slot);
+    return [{ ...node, props, children: sanitize(node.children), slots }];
+  });
+
+  return { ...candidatePage, nodes: sanitize(candidatePage.nodes) };
 }
 
 function imageFailure(error: unknown): { code: string; message: string } {
@@ -216,7 +272,82 @@ async function pageAssetsBelongToPage(pageDsl: PageDsl, pageId: string, assets?:
   return true;
 }
 
-export function registerDraftRoutes(app: FastifyInstance, drafts: DraftRepository, modelConfig?: ModelConfig, imageConfig?: ImageModelConfig, assetStore?: AssetStore, assets?: AssetRepository): void {
+export function registerDraftRoutes(app: FastifyInstance, drafts: DraftRepository, modelConfig?: ModelConfig, imageConfig?: ImageModelConfig, assetStore?: AssetStore, assets?: AssetRepository, visionConfig?: ModelConfig, getSkillInstructions?: (scope: StudioSkillScope) => Promise<string>): void {
+  app.post('/import-image/assets', { bodyLimit: 7 * 1024 * 1024, config: { rateLimit: { max: 4, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const body = request.body as Record<string, unknown> | null;
+    const allowedKeys = new Set(['pageId', 'pageDsl', 'imageDataUrl', 'regions']);
+    const validRegion = (value: unknown): value is ImageRegionCrop => {
+      if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+      const region = value as Record<string, unknown>;
+      return Object.keys(region).every((key) => ['nodeId', 'x', 'y', 'width', 'height', 'alt'].includes(key)) &&
+        typeof region.nodeId === 'string' && pageIdentifier.test(region.nodeId) &&
+        ['x', 'y', 'width', 'height'].every((key) => Number.isSafeInteger(region[key])) &&
+        typeof region.x === 'number' && region.x >= 0 && typeof region.y === 'number' && region.y >= 0 &&
+        typeof region.width === 'number' && region.width > 0 && typeof region.height === 'number' && region.height > 0 &&
+        typeof region.alt === 'string' && region.alt.length <= 120 && !/[\u0000-\u001F\u007F]/.test(region.alt);
+    };
+    if (!body || Object.keys(body).some((key) => !allowedKeys.has(key)) ||
+      typeof body.pageId !== 'string' || body.pageId.length > 64 || !pageIdentifier.test(body.pageId) ||
+      !body.pageDsl || typeof body.pageDsl !== 'object' || Array.isArray(body.pageDsl) ||
+      typeof body.imageDataUrl !== 'string' || body.imageDataUrl.length > 7_000_000 ||
+      !Array.isArray(body.regions) || body.regions.length < 1 || body.regions.length > 24 || !body.regions.every(validRegion)) {
+      return reply.code(400).send({ ok: false, error: { code: 'input.invalid', message: 'Provide a valid page and up to 24 bounded image regions' } });
+    }
+    const candidate = validatePageDsl(body.pageDsl);
+    if (!candidate.ok || candidate.dsl.pageId !== body.pageId) {
+      return reply.code(400).send({ ok: false, error: { code: 'input.invalid', message: 'Provide a valid page for image regions' } });
+    }
+    const placeholders = new Set(collectNodes(candidate.dsl)
+      .filter((node) => node.id.startsWith('reference-region-') && node.type === 'Shape' && node.props.shape === 'rectangle')
+      .map((node) => node.id));
+    if (body.regions.some((region) => !placeholders.has(region.nodeId))) {
+      return reply.code(400).send({ ok: false, error: { code: 'input.invalid', message: 'Image regions must match screenshot placeholders on the page' } });
+    }
+    if (!assetStore) return reply.code(503).send({ ok: false, error: { code: 'asset.unavailable', message: 'Image assets are not available for this workspace' } });
+    try {
+      const crops = await extractImageRegionCrops(body.imageDataUrl, body.regions);
+      const saved = [];
+      for (const crop of crops) {
+        const asset = await assetStore.savePng({ bytes: crop.bytes, pageId: body.pageId });
+        saved.push({ nodeId: crop.nodeId, assetId: asset.assetId });
+      }
+      return reply.code(201).send({ ok: true, data: { assets: saved } });
+    } catch (error) {
+      if (error instanceof ModelAdapterError) {
+        const mapped = modelError(error);
+        return reply.code(mapped.status).send({ ok: false, error: { code: mapped.code, message: mapped.message } });
+      }
+      request.log.error({ err: error }, 'Imported image region storage failed');
+      return reply.code(500).send({ ok: false, error: { code: 'asset.save_failed', message: 'Image regions could not be saved. The current page was not changed.' } });
+    }
+  });
+
+  app.post('/import-image', { bodyLimit: 18 * 1024 * 1024, config: { rateLimit: { max: 4, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const body = request.body as Partial<ImageToDslInput> | null;
+    const detailsValid = body?.detailImages === undefined || Array.isArray(body.detailImages) && body.detailImages.length <= 2 && body.detailImages.every((detail) =>
+      Boolean(detail) && Object.keys(detail).every((key) => ['imageDataUrl', 'x', 'y', 'width', 'height'].includes(key)) &&
+      typeof detail?.imageDataUrl === 'string' && detail.imageDataUrl.length <= 5_600_000 &&
+      [detail.x, detail.y, detail.width, detail.height].every(Number.isSafeInteger));
+    if (!body || JSON.stringify(body).length > 18 * 1024 * 1024 || !detailsValid ||
+      Object.keys(body).some((key) => !['imageDataUrl', 'detailImages', 'pageType', 'instruction'].includes(key)) ||
+      typeof body.imageDataUrl !== 'string' || body.imageDataUrl.length > 7_000_000 ||
+      !['auto', 'website', 'admin'].includes(String(body.pageType)) ||
+      (body.instruction !== undefined && (typeof body.instruction !== 'string' || body.instruction.length > 1_000))) {
+      return reply.code(400).send({ ok: false, error: { code: 'input.invalid', message: 'Provide a PNG, JPEG, or WebP image, a page type, and an optional instruction under 1000 characters' } });
+    }
+    try {
+      const skillInstructions = await getSkillInstructions?.('imageToDsl');
+      const result = await importImageToDsl(body as ImageToDslInput, visionConfig ?? modelConfig ?? loadVisionModelConfig(), skillInstructions);
+      return { ok: true, data: result };
+    } catch (error) {
+      if (error instanceof ModelAdapterError) {
+        const mapped = modelError(error);
+        return reply.code(mapped.status).send({ ok: false, error: { code: mapped.code, message: mapped.message } });
+      }
+      throw error;
+    }
+  });
+
   app.post('/generate', async (request, reply) => {
     const body = request.body as { sections?: unknown; pageType?: unknown } | null;
     const pageType = body?.pageType ?? 'auto';
@@ -226,7 +357,8 @@ export function registerDraftRoutes(app: FastifyInstance, drafts: DraftRepositor
       return reply.code(400).send({ ok: false, error: { code: 'input.invalid', message: 'Valid requirement sections and page type are required' } });
     }
     try {
-      return { ok: true, data: await generateDraft({ sections: body.sections as RequirementSection[], pageType: pageType as 'auto' | 'website' | 'admin' }, modelConfig ?? loadModelConfig()) };
+      const skillInstructions = await getSkillInstructions?.('pageGeneration');
+      return { ok: true, data: await generateDraft({ sections: body.sections as RequirementSection[], pageType: pageType as 'auto' | 'website' | 'admin' }, modelConfig ?? loadModelConfig(), skillInstructions) };
     } catch (error) {
       if (error instanceof ModelAdapterError) {
         const mapped = modelError(error);
@@ -255,7 +387,9 @@ export function registerDraftRoutes(app: FastifyInstance, drafts: DraftRepositor
       guardedBody = { ...body, expectedRevision: body.expectedRevision ?? currentRevision };
     }
     try {
-      const result = await refineDraft(body, modelConfig ?? loadModelConfig());
+      const skillInstructions = await getSkillInstructions?.('pageRefinement');
+      const modelResult = await refineDraft(body, modelConfig ?? loadModelConfig(), skillInstructions);
+      const result: RefineDraftResult = { ...modelResult, pageDsl: preserveRegisteredImageAssets(body.pageDsl, modelResult.pageDsl) };
       if (!(await pageAssetsBelongToPage(result.pageDsl, result.pageDsl.pageId, assets, assetStore))) {
         throw new ModelAdapterError('invalid_schema', 'Model returned an unregistered or foreign image asset');
       }

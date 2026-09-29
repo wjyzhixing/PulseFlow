@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { generateImage, loadImageModelConfig, ModelAdapterError, type ImageModelConfig } from '@pulseflow/model-adapter';
+import { generateImage, loadImageModelConfig, ModelAdapterError, normalizeUploadedImageDataUrl, type ImageModelConfig } from '@pulseflow/model-adapter';
 import { validatePageDsl, type EntityField, type PageDsl, type UiNode } from '@pulseflow/ui-dsl';
 import { AssetRepository } from '../db/asset-repository.js';
 import { DraftRepository } from '../db/draft-repository.js';
@@ -10,6 +10,22 @@ const assetIdentifier = /^asset-[A-Za-z0-9_-]+$/;
 
 interface ImagePlanBody { prompt: string; targetNodeId?: string; placement: 'inline' | 'background' }
 interface GenerateAssetBody { pageId: string; draftId?: string; expectedRevision?: string; pageDsl?: PageDsl; entityFields?: EntityField[]; imagePlan: ImagePlanBody }
+interface UploadAssetBody { pageId: string; draftId?: string; expectedRevision?: string; imageDataUrl: string }
+
+function parseUploadBody(value: unknown): UploadAssetBody | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const body = value as Record<string, unknown>;
+  if (Object.keys(body).some((key) => !['pageId', 'draftId', 'expectedRevision', 'imageDataUrl'].includes(key)) ||
+    typeof body.pageId !== 'string' || !identifier.test(body.pageId) ||
+    (body.draftId !== undefined && (typeof body.draftId !== 'string' || !identifier.test(body.draftId))) ||
+    (body.expectedRevision !== undefined && (typeof body.expectedRevision !== 'string' || !body.expectedRevision || body.expectedRevision.length > 128)) ||
+    (body.expectedRevision !== undefined && body.draftId === undefined) ||
+    (body.draftId !== undefined && body.expectedRevision === undefined) ||
+    typeof body.imageDataUrl !== 'string' || body.imageDataUrl.length > 7_000_000) return null;
+  return { pageId: body.pageId, imageDataUrl: body.imageDataUrl,
+    ...(typeof body.draftId === 'string' ? { draftId: body.draftId } : {}),
+    ...(typeof body.expectedRevision === 'string' ? { expectedRevision: body.expectedRevision } : {}) };
+}
 
 function parseBody(value: unknown): GenerateAssetBody | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
@@ -70,6 +86,30 @@ export function registerAssetRoutes(
   store: AssetStore,
   imageConfig?: ImageModelConfig
 ): void {
+  app.post('/upload', { bodyLimit: 7 * 1024 * 1024, config: { rateLimit: { max: 10, timeWindow: '1 minute' } } }, async (request, reply) => {
+    const body = parseUploadBody(request.body);
+    if (!body) return reply.code(400).send({ ok: false, error: { code: 'input.invalid', message: 'Provide a valid image, page, and draft scope' } });
+    if (body.draftId) {
+      const draft = drafts.get(body.draftId);
+      if (!draft || draft.pageId !== body.pageId) return reply.code(404).send({ ok: false, error: { code: 'draft.not_found', message: 'Draft not found' } });
+      const currentRevision = drafts.getRevision(body.draftId);
+      if (!currentRevision || body.expectedRevision && currentRevision !== body.expectedRevision) {
+        return reply.code(409).send({ ok: false, error: { code: 'draft.revision_conflict', message: 'The page changed before the image could be uploaded' } });
+      }
+    }
+    try {
+      const bytes = await normalizeUploadedImageDataUrl(body.imageDataUrl);
+      const asset = await store.savePng({ bytes, pageId: body.pageId, ...(body.draftId ? { draftId: body.draftId } : {}) });
+      return reply.code(201).send({ ok: true, data: asset });
+    } catch (error) {
+      if (error instanceof ModelAdapterError && error.code === 'input') {
+        return reply.code(400).send({ ok: false, error: { code: 'image.upload.invalid', message: error.message } });
+      }
+      request.log.error({ err: error }, 'Image asset upload failed');
+      return reply.code(500).send({ ok: false, error: { code: 'asset.save_failed', message: 'The image could not be saved. Try again.' } });
+    }
+  });
+
   app.post('/generate', { bodyLimit: 32 * 1024, config: { rateLimit: { max: 3, timeWindow: '1 minute' } } }, async (request, reply) => {
     const body = parseBody(request.body);
     if (!body) return reply.code(400).send({ ok: false, error: { code: 'input.invalid', message: 'Provide a valid page and image plan' } });

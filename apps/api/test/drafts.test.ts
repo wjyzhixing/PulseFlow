@@ -184,6 +184,39 @@ describe('draft persistence', () => {
     } finally { await app.close(); }
   });
 
+  it('keeps the refine route successful when JSON mode returns a null image plan', async () => {
+    const currentPage = {
+      schemaVersion: 1 as const,
+      pageId: 'robot-home',
+      title: '未命名页面',
+      nodes: [{
+        id: 'frame-1', type: 'Frame' as const,
+        props: { name: '新建画框', direction: 'column', gap: 12, padding: 24, alignItems: 'stretch', justifyContent: 'start' },
+        children: [], slots: [],
+        design: { size: { width: 536, height: 384 }, fill: '#FFFFFF', cornerRadius: 8, position: { mode: 'absolute', x: 120, y: 72 } }
+      }]
+    };
+    const entityFields: [] = [];
+    const semanticQuestions: [] = [];
+    const modelResult = {
+      entityFields, pageDsl: { ...currentPage, pageKind: 'admin' as const, title: '机器人首页' },
+      semanticQuestions, intent: 'page_edit', imagePlan: null
+    };
+    const fetchImpl = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(modelResult) } }] }), { status: 200 });
+    const app = buildApp({ workspaceToken: 'secret', dbPath: ':memory:', modelConfig: {
+      baseUrl: 'https://model.example', model: 'test', apiKey: 'test-only', timeoutMs: 1000, fetchImpl
+    } });
+    try {
+      const response = await app.inject({
+        method: 'POST', url: '/api/drafts/refine', headers: { authorization: 'Bearer secret' },
+        payload: { instruction: '做一个机器人首页', entityFields, pageDsl: currentPage, semanticQuestions }
+      });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json()).toMatchObject({ ok: true, data: { intent: 'page_edit', pageDsl: { title: '机器人首页', pageKind: 'admin' } } });
+      expect(response.json().data.imagePlan).toBeUndefined();
+    } finally { await app.close(); }
+  });
+
   it('does not call image generation for a page-only refinement', async () => {
     const entityFields = validCandidate.entityFields;
     const semanticQuestions = validCandidate.semanticQuestions.map(({ id, question }) => ({ id, question }));
@@ -251,7 +284,11 @@ describe('draft persistence', () => {
     const directory = await mkdtemp(join(tmpdir(), 'pulseflow-refine-image-'));
     const entityFields = validCandidate.entityFields;
     const semanticQuestions = validCandidate.semanticQuestions.map(({ id, question }) => ({ id, question }));
-    const result = { entityFields, pageDsl: { ...validCandidate.pageDsl, pageKind: 'admin' as const }, semanticQuestions, intent: 'page_edit_and_image',
+    const modelPageDsl = { ...validCandidate.pageDsl, pageKind: 'admin' as const, nodes: [...validCandidate.pageDsl.nodes, {
+      id: 'model-invented-image', type: 'Image' as const,
+      props: { assetId: 'asset-model-invented', alt: 'Robot', fit: 'cover' as const, aspectRatio: '16:9' as const }, children: [], slots: []
+    }] };
+    const result = { entityFields, pageDsl: modelPageDsl, semanticQuestions, intent: 'page_edit_and_image',
       imagePlan: { prompt: '清晰克制的企业管理产品配图', targetNodeId: 'header', placement: 'inline' } };
     const textFetch = async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(result) } }] }), { status: 200 });
     const bytes = tinyPng();
@@ -336,5 +373,67 @@ describe('draft persistence', () => {
       const mismatch = await app.inject({ method: 'PUT', url: '/api/drafts/draft-1', headers, payload: { ...original, id: 'other' } });
       expect(mismatch.statusCode).toBe(400);
     } finally { await app.close(); }
+  });
+});
+
+describe('image to DSL import route', () => {
+  const referenceImage = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAADElEQVQImWP4//8/AAX+Av5Y8msOAAAAAElFTkSuQmCC';
+  const visualPlan = {
+    pageKind: 'admin', title: '截图设计', notes: ['截图含有一组统计卡片'],
+    regions: [{ parentIndex: -1, kind: 'panel', label: '画布', x: 0, y: 0, width: 1, height: 1, fill: '#F5F7FA' }]
+  };
+
+  it('accepts an authenticated image, calls vision, and returns a validated editable page', async () => {
+    const fetchImpl = vi.fn(async () => new Response(JSON.stringify({ choices: [{ message: { content: JSON.stringify(visualPlan) } }] }), { status: 200 }));
+    const app = buildApp({ workspaceToken: 'secret', dbPath: ':memory:', modelConfig: { baseUrl: 'https://model.example/v1', model: 'vision', apiKey: 'test-only', timeoutMs: 1000, fetchImpl } });
+    try {
+      const response = await app.inject({ method: 'POST', url: '/api/drafts/import-image', headers: { authorization: 'Bearer secret' }, payload: { imageDataUrl: referenceImage, pageType: 'auto', instruction: '保留蓝白色控制台风格' } });
+      expect(response.statusCode, response.body).toBe(200);
+      expect(response.json().data).toMatchObject({ pageDsl: { pageId: 'reference-page', pageKind: 'admin', nodes: [{ type: 'Frame', children: [{ type: 'Frame' }] }] }, notes: visualPlan.notes });
+      const body = JSON.parse(String((fetchImpl.mock.calls[0] as unknown as [string, RequestInit])[1].body));
+      expect(body.messages[1].content[1].image_url.url).toMatch(/^data:image\/jpeg;base64,/);
+    } finally { await app.close(); }
+  });
+
+  it('requires authentication and rejects invalid images before invoking vision', async () => {
+    const fetchImpl = vi.fn(async () => new Response('{}'));
+    const app = buildApp({ workspaceToken: 'secret', dbPath: ':memory:', modelConfig: { baseUrl: 'https://model.example', model: 'vision', apiKey: 'test-only', timeoutMs: 1000, fetchImpl } });
+    try {
+      const unauthorizedResponse = await app.inject({ method: 'POST', url: '/api/drafts/import-image', payload: { imageDataUrl: referenceImage, pageType: 'auto' } });
+      expect(unauthorizedResponse.statusCode).toBe(401);
+      const invalid = await app.inject({ method: 'POST', url: '/api/drafts/import-image', headers: { authorization: 'Bearer secret' }, payload: { imageDataUrl: 'data:text/plain;base64,SGVsbG8=', pageType: 'auto' } });
+      expect(invalid.statusCode).toBe(400);
+      expect(invalid.json()).toMatchObject({ ok: false, error: { code: 'input.invalid' } });
+      expect(fetchImpl).not.toHaveBeenCalled();
+    } finally { await app.close(); }
+  });
+
+  it('saves validated screenshot crops as page assets when the generated DSL is applied', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pulseflow-image-crops-'));
+    const app = buildApp({ workspaceToken: 'secret', dbPath: join(directory, 'db.sqlite'), assetDir: join(directory, 'assets') });
+    const pageDsl = {
+      schemaVersion: 1, pageId: 'page-image-import', title: '机器人控制台', pageKind: 'admin',
+      nodes: [{
+        id: 'reference-artboard', type: 'Frame', props: { name: '机器人控制台', direction: 'column', gap: 0, padding: 0 },
+        design: { position: { mode: 'absolute', x: 0, y: 0 }, size: { width: 1, height: 1 } },
+        children: [{
+          id: 'reference-region-1', type: 'Shape', props: { shape: 'rectangle' },
+          design: { position: { mode: 'absolute', x: 0, y: 0 }, size: { width: 1, height: 1 } }, children: [], slots: []
+        }], slots: []
+      }]
+    };
+    try {
+      const applied = await app.inject({ method: 'POST', url: '/api/drafts/import-image/assets', headers: { authorization: 'Bearer secret' }, payload: {
+        pageId: 'page-image-import', pageDsl, imageDataUrl: referenceImage,
+        regions: [{ nodeId: 'reference-region-1', x: 0, y: 0, width: 1, height: 1, alt: '控制台视觉主图' }]
+      } });
+      expect(applied.statusCode, applied.body).toBe(201);
+      const asset = applied.json().data.assets[0];
+      expect(asset).toMatchObject({ nodeId: 'reference-region-1', assetId: expect.stringMatching(/^asset-/) });
+
+      const saved = await app.inject({ method: 'GET', url: `/api/assets/${asset.assetId}`, headers: { authorization: 'Bearer secret' } });
+      expect(saved.statusCode).toBe(200);
+      expect(saved.headers['content-type']).toBe('image/png');
+    } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }
   });
 });

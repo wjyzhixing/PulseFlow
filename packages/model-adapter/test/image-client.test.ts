@@ -176,6 +176,15 @@ describe('generateImage', () => {
     expect(downloadPinnedResult).toHaveBeenCalledWith(expect.objectContaining({ url: resultUrl }), expect.any(AbortSignal));
   });
 
+  it('accepts the actual 2K Seedream 16:9 output dimensions', async () => {
+    const bytes = makePng(2848, 1600);
+    const fetchImpl = async () => imageResponse({ data: [{ b64_json: Buffer.from(bytes).toString('base64') }] });
+
+    await expect(generateImage('Draw a robotics hero', {
+      ...baseConfig, model: 'doubao-seedream-5.0-lite', mode: 'volcengine-ark-images', fetchImpl
+    })).resolves.toMatchObject({ width: 2848, height: 1600, mimeType: 'image/png' });
+  });
+
   it.each([{}, { output: { choices: [{ message: { content: [] } }] } }])(
     'rejects malformed DashScope response envelopes', async (body) => {
       await expect(generateImage('Draw', {

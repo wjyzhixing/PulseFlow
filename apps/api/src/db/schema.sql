@@ -7,6 +7,14 @@ CREATE TABLE IF NOT EXISTS drafts (
   status TEXT NOT NULL CHECK (status IN ('draft', 'confirmed')),
   updatedAt TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS studio_files (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 120),
+  activePageId TEXT NOT NULL,
+  pagesJson TEXT NOT NULL,
+  revision INTEGER NOT NULL CHECK (revision >= 1),
+  updatedAt TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS assets (
   assetId TEXT PRIMARY KEY CHECK (assetId GLOB 'asset-*'),
   pageId TEXT NOT NULL,

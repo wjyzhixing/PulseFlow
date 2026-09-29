@@ -1,4 +1,4 @@
-export type ModelAdapterErrorCode = 'config' | 'timeout' | 'http' | 'network' | 'invalid_json' | 'invalid_schema';
+export type ModelAdapterErrorCode = 'config' | 'timeout' | 'http' | 'network' | 'invalid_json' | 'invalid_schema' | 'input';
 
 export class ModelAdapterError extends Error {
   constructor(

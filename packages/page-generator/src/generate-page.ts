@@ -4,6 +4,8 @@ import { generateEvents } from './generate-events.js';
 import { generateHeader } from './generate-header.js';
 import { generateRuntime } from './generate-runtime.js';
 import { PAGE_THEME_CSS } from './page-theme.js';
+import { flowSizingStyle, type FrameDirection } from './layout-sizing.js';
+import { designFontStack } from './design-fonts.js';
 
 export interface GeneratedFile { path: string; content: string; encoding?: 'utf8' | 'base64' }
 
@@ -11,26 +13,98 @@ function jsLiteral(value: unknown): string {
   return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, (character) => `\\u${character.charCodeAt(0).toString(16).padStart(4, '0')}`);
 }
 
-interface BuildContext { declarations: string[]; nextId: number }
+interface BuildContext { declarations: string[]; nextId: number; colorVariables: ReadonlyMap<string, string> }
 
 function assetExtension(assetId: string): 'svg' | 'png' {
   return getImageAsset(assetId) ? 'svg' : 'png';
 }
 
 const propDefaults: Record<ComponentType, string> = {
+  Frame: "{ direction: 'column' as 'row' | 'column', gap: 0, padding: 0, clipContent: true, alignItems: 'stretch' as 'start' | 'center' | 'end' | 'stretch', justifyContent: 'start' as 'start' | 'center' | 'end' | 'space-between' }",
+  Text: '{}', Shape: '{}',
   Card: '{ title: undefined as string | undefined }',
   PageHeader: '{ subtitle: undefined as string | undefined }',
   Form: "{ layout: undefined as 'horizontal' | 'vertical' | 'inline' | undefined }",
   FormItem: '{ label: undefined as string | undefined }',
   Input: '{ placeholder: undefined as string | undefined, disabled: undefined as boolean | undefined }',
   Select: '{ placeholder: undefined as string | undefined }',
-  Button: "{ variant: undefined as 'primary' | 'default' | 'dashed' | 'text' | 'link' | undefined, event: undefined as string | undefined }",
+  Button: "{ variant: undefined as 'primary' | 'default' | 'dashed' | 'text' | 'link' | undefined, event: undefined as string | undefined, targetSectionId: undefined as string | undefined }",
   Table: '{}', Row: '{ gutter: undefined as number | undefined }', Col: '{}',
   Tag: "{ color: undefined as 'default' | 'success' | 'warning' | 'error' | 'processing' | undefined }",
   Badge: "{ status: undefined as 'default' | 'success' | 'warning' | 'error' | 'processing' | undefined }",
-  SiteNavigation: '{}', Hero: '{}', ContentSection: '{}', FeatureCard: '{}', MetricCard: '{}', CallToAction: '{}',
+  SiteNavigation: '{}',
+  Hero: "{ eyebrow: undefined as string | undefined, primaryLabel: undefined as string | undefined, primarySectionId: undefined as string | undefined, secondaryLabel: undefined as string | undefined, secondarySectionId: undefined as string | undefined }",
+  ContentSection: '{ description: undefined as string | undefined }',
+  FeatureCard: "{ icon: undefined as 'analytics' | 'workflow' | 'security' | 'people' | undefined }",
+  MetricCard: "{ trend: undefined as string | undefined, tone: undefined as 'default' | 'success' | 'warning' | undefined }",
+  CallToAction: '{ description: undefined as string | undefined }',
   Image: "{ aspectRatio: undefined as '16:9' | '4:3' | '1:1' | 'auto' | undefined }"
 };
+
+function fullDesignStyle(node: UiNode, parentDirection?: FrameDirection, colorVariables: ReadonlyMap<string, string> = new Map()): Record<string, string | number> {
+  const design = node.design;
+  if (!design) return {};
+  const style: Record<string, string | number> = { ...flowSizingStyle(node, parentDirection) };
+  if (design.visible === false) style.display = 'none';
+  if (design.position?.mode === 'absolute') Object.assign(style, { position: 'absolute', left: `${design.position.x}px`, top: `${design.position.y}px` });
+  if (design.size?.width !== undefined) style.width = typeof design.size.width === 'number' ? `${design.size.width}px` : design.size.width === 'fill' ? '100%' : 'max-content';
+  if (design.size?.height !== undefined) style.height = typeof design.size.height === 'number' ? `${design.size.height}px` : design.size.height === 'fill' ? '100%' : 'auto';
+  const transforms = [
+    ...(design.rotation !== undefined ? [`rotate(${design.rotation}deg)`] : []),
+    ...(design.flipX ? ['scaleX(-1)'] : []),
+    ...(design.flipY ? ['scaleY(-1)'] : [])
+  ];
+  if (transforms.length) style.transform = transforms.join(' ');
+  if (design.opacity !== undefined) style.opacity = design.opacity;
+  const fill = design.fill ?? (design.fillVariableId ? colorVariables.get(design.fillVariableId) : undefined);
+  if (fill) style.backgroundColor = fill;
+  if (design.stroke) Object.assign(style, { border: `${design.strokeWidth ?? 1}px solid ${design.stroke}` });
+  if (design.cornerRadius !== undefined) style.borderRadius = `${design.cornerRadius}px`;
+  if (node.type === 'Shape' && node.props.shape === 'ellipse') style.borderRadius = '50%';
+  if (node.type === 'Shape' && node.props.shape === 'line') style.height = '1px';
+  const type = design.typography;
+  if (type) {
+    style.fontFamily = designFontStack(type.fontFamily);
+    if (type.fontSize !== undefined) style.fontSize = `${type.fontSize}px`;
+    if (type.fontWeight !== undefined) style.fontWeight = type.fontWeight;
+    if (type.lineHeight !== undefined) style.lineHeight = String(type.lineHeight);
+    if (type.letterSpacing !== undefined) style.letterSpacing = `${type.letterSpacing}px`;
+    if (type.textAlign !== undefined) style.textAlign = type.textAlign;
+    const textColor = type.color ?? (type.colorVariableId ? colorVariables.get(type.colorVariableId) : undefined);
+    if (textColor !== undefined) style.color = textColor;
+  }
+  return style;
+}
+
+function designStyle(node: UiNode, parentDirection?: FrameDirection, colorVariables?: ReadonlyMap<string, string>): Record<string, string | number> {
+  const style = fullDesignStyle(node, parentDirection, colorVariables);
+  delete style.backgroundColor;
+  delete style.border;
+  delete style.borderRadius;
+  return style;
+}
+
+function contentDesignStyle(node: UiNode, parentDirection?: FrameDirection, colorVariables?: ReadonlyMap<string, string>): Record<string, string | number> {
+  const style = fullDesignStyle(node, parentDirection, colorVariables);
+  const keys = ['backgroundColor', 'border', 'borderRadius', 'fontFamily', 'fontSize', 'fontWeight', 'lineHeight', 'letterSpacing', 'textAlign', 'color'];
+  return {
+    ...(node.design ? { width: '100%', height: '100%', boxSizing: 'border-box' } : {}),
+    ...Object.fromEntries(keys.flatMap((key) => style[key] === undefined ? [] : [[key, style[key]!]]))
+  };
+}
+
+function addContentStyle(markup: string, styleVariable: string): string {
+  const tagEnd = markup.indexOf('>');
+  if (tagEnd < 0) return markup;
+  const openTag = markup.slice(0, tagEnd + 1);
+  const dynamicStyle = /\s:style="([^"]+)"/.exec(openTag);
+  if (dynamicStyle) {
+    const merged = ` :style="[${dynamicStyle[1]}, ${styleVariable}]"`;
+    return `${openTag.slice(0, dynamicStyle.index)}${merged}${openTag.slice(dynamicStyle.index + dynamicStyle[0].length)}${markup.slice(tagEnd + 1)}`;
+  }
+  const insertAt = openTag.endsWith('/>') ? tagEnd - 1 : tagEnd;
+  return `${markup.slice(0, insertAt)} :style="${styleVariable}"${markup.slice(insertAt)}`;
+}
 
 function backgroundStyle(node: UiNode, context: BuildContext, id: string): string {
   const assetId = node.props.backgroundAssetId;
@@ -50,13 +124,34 @@ function backgroundStyle(node: UiNode, context: BuildContext, id: string): strin
   return ` :style="${style}"`;
 }
 
-function buildNode(node: UiNode, context: BuildContext, fieldId?: string): string {
+function buildNode(node: UiNode, context: BuildContext, fieldId?: string, parentDirection?: FrameDirection): string {
+  const id = `n${context.nextId}`;
+  const markup = buildNodeMarkup(node, context, fieldId, parentDirection);
+  return node.design ? `<div class="pf-design-wrapper" :style="${id}DesignStyle">${addContentStyle(markup, `${id}ContentStyle`)}</div>` : markup;
+}
+
+function buildNodeMarkup(node: UiNode, context: BuildContext, fieldId?: string, parentDirection?: FrameDirection): string {
   const id = `n${context.nextId++}`;
   context.declarations.push(`const ${id} = { ...${propDefaults[node.type]}, ...(${jsLiteral(node.props)} as const) };`);
   if (node.condition) context.declarations.push(`const ${id}Condition = ${jsLiteral(node.condition)} as const;`);
   const conditional = node.condition ? ` v-if="matchesCondition(data, ${id}Condition.fieldId, ${id}Condition.equals)"` : '';
-  const children = () => node.children.map((child) => buildNode(child, context, node.type === 'FormItem' ? String(node.props.fieldId) : fieldId)).join('\n');
+  context.declarations.push(`const ${id}DesignStyle = ${jsLiteral(designStyle(node, parentDirection, context.colorVariables))} as const;`);
+  context.declarations.push(`const ${id}ContentStyle = ${jsLiteral(contentDesignStyle(node, parentDirection, context.colorVariables))} as const;`);
+  const childDirection = node.type === 'Frame' ? node.props.direction === 'row' ? 'row' : 'column' : undefined;
+  const children = () => node.children.map((child) => buildNode(child, context, node.type === 'FormItem' ? String(node.props.fieldId) : fieldId, childDirection)).join('\n');
   switch (node.type) {
+    case 'Frame': {
+      const flex = { position: 'relative', display: 'flex', flexDirection: node.props.direction ?? 'column', gap: `${node.props.gap ?? 0}px`, padding: `${node.props.padding ?? 0}px`, overflow: node.props.clipContent === false ? undefined : 'hidden', alignItems: ({ start: 'flex-start', center: 'center', end: 'flex-end', stretch: 'stretch' } as Record<string, string>)[String(node.props.alignItems ?? 'stretch')], justifyContent: ({ start: 'flex-start', center: 'center', end: 'flex-end', 'space-between': 'space-between' } as Record<string, string>)[String(node.props.justifyContent ?? 'start')] };
+      context.declarations.push(`const ${id}FrameStyle = ${jsLiteral(flex)} as const;`);
+      const frameId = `pf-frame-${node.id}`;
+      if (node.design?.prototype) {
+        context.declarations.push(`const ${id}Prototype = () => { if (typeof document === 'undefined') return; document.getElementById(${jsLiteral(`pf-frame-${node.design.prototype.targetNodeId}`)})?.scrollIntoView({ behavior: 'smooth', block: 'start' }); };`);
+      }
+      const clickHandler = node.design?.prototype ? ` @click.stop="${id}Prototype"` : '';
+      return `<div${conditional} id="${frameId}" class="pf-frame"${clickHandler} :style="${id}FrameStyle">${children()}</div>`;
+    }
+    case 'Text': return `<p${conditional} class="pf-text">{{ ${id}.text }}</p>`;
+    case 'Shape': return `<div${conditional} class="pf-shape pf-shape--${node.props.shape}" role="presentation" style="${node.props.shape === 'ellipse' ? 'border-radius:50%' : node.props.shape === 'line' ? 'height:1px' : ''}"></div>`;
     case 'Card': return `<a-card${conditional} :title="${id}.title">${children()}</a-card>`;
     case 'PageHeader': {
       const tags = node.slots.find((slot) => slot.name === 'tags');
@@ -73,7 +168,7 @@ function buildNode(node: UiNode, context: BuildContext, fieldId?: string): strin
       if (fieldId) context.declarations.push(`const ${id}Field = ${jsLiteral(fieldId)};`);
       return `<a-select${conditional} :options="${id}.options.map(option => ({ ...option }))" :placeholder="${id}.placeholder"${fieldId ? ` :value="selectValue(data, ${id}Field)"` : ''} />`;
     }
-    case 'Button': return `<a-button${conditional} :type="${id}.variant ?? 'default'"${node.props.event ? ` @click="invokeEvent(handlers, ${id}.event)"` : ''}>{{ ${id}.label }}</a-button>`;
+    case 'Button': return `<a-button${conditional} :type="${id}.variant ?? 'default'"${node.props.targetSectionId ? ` :href="'#' + ${id}.targetSectionId"` : node.props.event ? ` @click="invokeEvent(handlers, ${id}.event)"` : ''}>{{ ${id}.label }}</a-button>`;
     case 'Table': {
       const slot = node.slots.find((item) => item.name === 'bodyCell');
       if (slot?.name === 'bodyCell') context.declarations.push(`const ${id}Cases = ${jsLiteral(slot.cases)} as const;`, `const ${id}Field = ${jsLiteral(slot.field)};`);
@@ -95,7 +190,8 @@ function buildNode(node: UiNode, context: BuildContext, fieldId?: string): strin
       const ratio = node.props.aspectRatio === 'auto' || !node.props.aspectRatio ? 'auto' : String(node.props.aspectRatio).replace(':', ' / ');
       const assetId = String(node.props.assetId);
       context.declarations.push(`const ${assetUrl} = new URL('./assets/${assetId}.${assetExtension(assetId)}', import.meta.url).href;`);
-      return `<img${conditional} class="pf-image" :src="${assetUrl}" :alt="${id}.alt" style="object-fit:${node.props.fit};aspect-ratio:${ratio}" />`;
+      context.declarations.push(`const ${id}ImageStyle = ${jsLiteral({ objectFit: node.props.fit, aspectRatio: ratio })} as const;`);
+      return `<img${conditional} class="pf-image" :src="${assetUrl}" :alt="${id}.alt" :style="${id}ImageStyle" />`;
     }
   }
 }
@@ -114,10 +210,28 @@ function referencedImageAssets(nodes: readonly UiNode[]): string[] {
 }
 
 function generatedSfc(dsl: PageDsl): string {
-  const context: BuildContext = { declarations: [], nextId: 0 };
+  const pageColorVariables = Object.fromEntries((dsl.theme?.colorVariables ?? []).map((variable) => [`--pf-color-variable-${variable.id}`, variable.value]));
+  const context: BuildContext = { declarations: [`const pageColorVariables = ${jsLiteral(pageColorVariables)} as const;`], nextId: 0, colorVariables: new Map((dsl.theme?.colorVariables ?? []).map((variable) => [variable.id, `var(--pf-color-variable-${variable.id})`])) };
   const markup = dsl.nodes.map((node) => buildNode(node, context)).join('\n');
   const pageKind = dsl.pageKind ?? 'admin';
-  return `<script setup lang="ts">\nimport './page.css';\nimport { Card as ACard, Form as AForm, Input as AInput, Select as ASelect, Button as AButton, Table as ATable, Row as ARow, Col as ACol, Tag as ATag, Badge as ABadge } from 'ant-design-vue';\nimport PageHeader from './components/PageHeader.vue';\nimport { displayValue, fieldValue, selectValue, matchesCondition, invokeEvent, bodyCellLabel, tableCellValue, tableColumns, tableRows } from './runtime';\nimport type { PageData } from './types';\nimport type { PageHandlers } from './events';\nconst { data = {}, handlers = {} } = defineProps<{ data?: PageData; handlers?: PageHandlers }>();\nconst iconMarks: Record<string, string> = { analytics: '▥', workflow: '↗', security: '✓', people: '◎' };\n${context.declarations.join('\n')}\n</script>\n<template>\n<section class="pulseflow-page pulseflow-page--${pageKind}" data-page-kind="${pageKind}" data-page-id="${dsl.pageId}">\n${markup}\n</section>\n</template>\n`;
+  const colorScheme = dsl.theme?.colorScheme ?? 'blue';
+  const cornerStyle = dsl.theme?.cornerStyle ?? 'rounded';
+  const root = dsl.nodes[0];
+  const rootWidth = root?.type === 'Frame' ? root.design?.size?.width : undefined;
+  const rootHeight = root?.type === 'Frame' ? root.design?.size?.height : undefined;
+  const artboardBounds = typeof rootWidth === 'number' && typeof rootHeight === 'number'
+    ? dsl.nodes.reduce((bounds, node) => {
+      const size = node.design?.size;
+      if (typeof size?.width !== 'number' || typeof size.height !== 'number') return bounds;
+      const x = node.design?.position?.mode === 'absolute' ? node.design.position.x : 0;
+      const y = node.design?.position?.mode === 'absolute' ? node.design.position.y : 0;
+      return { width: Math.max(bounds.width, x + size.width), height: Math.max(bounds.height, y + size.height) };
+    }, { width: rootWidth, height: rootHeight })
+    : null;
+  const artboardStyle = artboardBounds
+    ? ` style="box-sizing:border-box;width:${artboardBounds.width}px;max-width:none;min-height:${artboardBounds.height}px;height:${artboardBounds.height}px;margin:0;padding:0;display:block"`
+    : '';
+  return `<script setup lang="ts">\nimport './page.css';\nimport { Card as ACard, Form as AForm, Input as AInput, Select as ASelect, Button as AButton, Table as ATable, Row as ARow, Col as ACol, Tag as ATag, Badge as ABadge } from 'ant-design-vue';\nimport PageHeader from './components/PageHeader.vue';\nimport { displayValue, fieldValue, selectValue, matchesCondition, invokeEvent, bodyCellLabel, tableCellValue, tableColumns, tableRows } from './runtime';\nimport type { PageData } from './types';\nimport type { PageHandlers } from './events';\nconst { data = {}, handlers = {} } = defineProps<{ data?: PageData; handlers?: PageHandlers }>();\nconst iconMarks: Record<string, string> = { analytics: '▥', workflow: '↗', security: '✓', people: '◎' };\n${context.declarations.join('\n')}\n</script>\n<template>\n<section class="pulseflow-page pulseflow-page--${pageKind}" data-page-kind="${pageKind}" data-page-id="${dsl.pageId}" data-pf-color-scheme="${colorScheme}" data-pf-corner-style="${cornerStyle}"${artboardStyle} :style="pageColorVariables">\n${markup}\n</section>\n</template>\n`;
 }
 
 

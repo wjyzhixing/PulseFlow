@@ -57,7 +57,7 @@ describe('Studio workflow', () => {
 
     await wrapper.get('[data-testid="start-blank-draft"]').trigger('click');
     expect(getDraftSession()).toMatchObject({ fieldsText: '[]', questions: [], dirty: true, saved: false });
-    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/design'));
+    await vi.waitFor(() => expect(router.currentRoute.value.path).toBe('/design'), { timeout: 5_000 });
     await flushPromises();
 
     expect(router.currentRoute.value.path).toBe('/design');

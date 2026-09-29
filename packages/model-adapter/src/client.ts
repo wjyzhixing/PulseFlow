@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { isDeepStrictEqual } from 'node:util';
 import { validatePageDsl } from '@pulseflow/ui-dsl';
 import type { EntityField, PageDsl, SemanticQuestion, UiNode } from '@pulseflow/ui-dsl';
 import type { ModelConfig } from './config.js';
@@ -79,7 +80,7 @@ function compositionError(pageDsl: PageDsl): string | undefined {
 const fieldRuleSchema = z.discriminatedUnion('kind', [
   z.strictObject({ kind: z.literal('required') }),
   z.strictObject({ kind: z.literal('enum'), values: z.array(z.string()).min(1) }),
-  z.strictObject({ kind: z.literal('format'), format: z.enum(['phone', 'creditCode']) })
+  z.strictObject({ kind: z.literal('format'), format: z.enum(['phone', 'creditCode', 'email']) })
 ]);
 const identifier = z.string().min(1).regex(/^[A-Za-z0-9_-]+$/);
 const resultSchema = z.strictObject({
@@ -95,10 +96,10 @@ const resultSchema = z.strictObject({
     id: identifier, question: z.string().min(1), answer: z.string().optional()
   }))
 });
-const imagePlanSchema = z.strictObject({
+const imagePlanSchema = z.object({
   prompt: z.string().trim().min(1).max(4_000).refine((prompt) => !/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/.test(prompt)),
-  targetNodeId: identifier.optional(),
-  placement: z.enum(['inline', 'background'])
+  targetNodeId: identifier.nullable().optional(),
+  placement: z.enum(['inline', 'background']).default('inline')
 });
 const refineResultSchema = resultSchema.extend({
   intent: z.enum(['page_edit', 'image', 'page_edit_and_image', 'needs_confirmation']),
@@ -156,7 +157,9 @@ async function requestDraft<T extends T2uiResult>(
   }
   const envelope = completionSchema.safeParse(completion);
   if (!envelope.success) throw new ModelAdapterError('invalid_schema', 'Model completion structure is invalid (expected choices[0].message.content).');
-  const parsed = responseSchema.safeParse(parseJson(envelope.data.choices[0].message.content));
+  const modelResult = parseJson(envelope.data.choices[0].message.content);
+  const compatibleResult = normalizeModelResult(modelResult);
+  const parsed = responseSchema.safeParse(compatibleResult);
   if (!parsed.success) {
     const issue = parsed.error.issues[0];
     const path = issue?.path.length ? issue.path.join('.') : 'draft';
@@ -178,10 +181,27 @@ async function requestDraft<T extends T2uiResult>(
   return { ...result, pageDsl: pageValidation.dsl };
 }
 
-export function generateDraft(input: T2uiInput, config: ModelConfig): Promise<T2uiResult> {
+/** Normalize common JSON-mode variations before applying the strict contract. */
+function normalizeModelResult(value: unknown): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const result = value as Record<string, unknown>;
+  if (result.imagePlan === null) return { ...result, imagePlan: undefined };
+  if (!result.imagePlan || typeof result.imagePlan !== 'object' || Array.isArray(result.imagePlan)) return value;
+  const imagePlan = result.imagePlan as Record<string, unknown>;
+  return {
+    ...result,
+    imagePlan: {
+      ...imagePlan,
+      ...(imagePlan.targetNodeId === null ? { targetNodeId: undefined } : {}),
+      ...(imagePlan.placement === undefined ? { placement: 'inline' } : {})
+    }
+  };
+}
+
+export function generateDraft(input: T2uiInput, config: ModelConfig, skillInstructions?: string): Promise<T2uiResult> {
   const requestedPageType = input.pageType ?? 'auto';
   const expectedPageKind = requestedPageType === 'website' || requestedPageType === 'admin' ? requestedPageType : undefined;
-  return requestDraft<T2uiResult>(buildPrompt(input), config, resultSchema, expectedPageKind, requestedPageType === 'auto', false).then((result) => {
+  return requestDraft<T2uiResult>(buildPrompt(input, skillInstructions), config, resultSchema, expectedPageKind, requestedPageType === 'auto', false).then((result) => {
     const incomplete = compositionError(result.pageDsl);
     if (incomplete) throw new ModelAdapterError('invalid_schema', incomplete);
     return result;
@@ -190,6 +210,62 @@ export function generateDraft(input: T2uiInput, config: ModelConfig): Promise<T2
 
 function allPageNodes(pageDsl: PageDsl): UiNode[] {
   return collectNodes(pageDsl.nodes);
+}
+
+function maskScopedNodes(nodes: readonly UiNode[], targetNodeIds: ReadonlySet<string>): unknown[] {
+  return nodes.map((node) => targetNodeIds.has(node.id)
+    ? { scopedTarget: true, id: node.id, type: node.type }
+    : {
+      ...node,
+      children: maskScopedNodes(node.children, targetNodeIds),
+      slots: node.slots.map((slot) => 'children' in slot
+        ? { ...slot, children: maskScopedNodes(slot.children, targetNodeIds) }
+        : { ...slot })
+    });
+}
+
+function maskScopedPage(page: PageDsl, targetNodeIds: ReadonlySet<string>): unknown {
+  return { ...page, nodes: maskScopedNodes(page.nodes, targetNodeIds) };
+}
+
+function isInsideScopedTarget(pageDsl: PageDsl, nodeId: string, targetNodeIds: ReadonlySet<string>): boolean {
+  const visit = (nodes: readonly UiNode[], inScope: boolean): boolean => nodes.some((node) => {
+    const scoped = inScope || targetNodeIds.has(node.id);
+    if (node.id === nodeId) return scoped;
+    return visit(node.children, scoped) || node.slots.some((slot) =>
+      'children' in slot && visit(slot.children, scoped));
+  });
+  return visit(pageDsl.nodes, false);
+}
+
+function validateScopedRefinement(
+  input: RefineDraftInput,
+  current: PageDsl,
+  candidate: RefineDraftResult,
+  targetNodeIds: ReadonlySet<string>
+): void {
+  const currentNodes = new Set(allPageNodes(current).map((node) => node.id));
+  if ([...targetNodeIds].some((id) => !currentNodes.has(id))) {
+    throw new ModelAdapterError('invalid_schema', 'Selection target is not present in the current page');
+  }
+  if (!isDeepStrictEqual(maskScopedPage(current, targetNodeIds), maskScopedPage(candidate.pageDsl, targetNodeIds)) ||
+      !isDeepStrictEqual(input.entityFields, candidate.entityFields) ||
+      !isDeepStrictEqual(input.semanticQuestions, candidate.semanticQuestions)) {
+    throw new ModelAdapterError('invalid_schema', 'Selection-scoped refinement changed content outside the selected layers');
+  }
+  const imageTarget = candidate.imagePlan?.targetNodeId
+    ? allPageNodes(current).find((node) => node.id === candidate.imagePlan?.targetNodeId)
+    : undefined;
+  if (candidate.imagePlan && candidate.imagePlan.placement === 'inline' &&
+      imageTarget && !['Image', 'Frame', 'ContentSection'].includes(imageTarget.type)) {
+    throw new ModelAdapterError('invalid_schema', 'Selection-scoped inline image must target an image or a container layer');
+  }
+  if (candidate.imagePlan?.targetNodeId && !isInsideScopedTarget(current, candidate.imagePlan.targetNodeId, targetNodeIds)) {
+    throw new ModelAdapterError('invalid_schema', 'Selection-scoped image target must be inside a selected layer');
+  }
+  if (candidate.imagePlan && !candidate.imagePlan.targetNodeId) {
+    throw new ModelAdapterError('invalid_schema', 'Selection-scoped image generation must target a selected layer');
+  }
 }
 
 function validateRefineIntent(result: RefineDraftResult, current: PageDsl): void {
@@ -215,20 +291,30 @@ function validateRefineIntent(result: RefineDraftResult, current: PageDsl): void
   }
 }
 
-export async function refineDraft(input: RefineDraftInput, config: ModelConfig): Promise<RefineDraftResult> {
+export async function refineDraft(input: RefineDraftInput, config: ModelConfig, skillInstructions?: string): Promise<RefineDraftResult> {
   if (!input.instruction.trim() || input.instruction.length > 2_000) {
     throw new ModelAdapterError('invalid_schema', 'Refinement instruction must contain 1 to 2000 characters');
   }
   const current = validatePageDsl(input.pageDsl, input.entityFields);
   if (!current.ok) throw new ModelAdapterError('invalid_schema', 'Current page DSL is invalid');
   const currentDsl: PageDsl = current.dsl.pageKind ? current.dsl : { ...current.dsl, pageKind: 'admin' };
-  const candidate = await requestDraft<RefineDraftResult>(buildRefinePrompt({ ...input, pageDsl: currentDsl }), config, refineResultSchema, currentDsl.pageKind, true, true);
+  const targetNodeIds = [...new Set(input.targetNodeIds ?? [])];
+  if (targetNodeIds.length > 200 || targetNodeIds.some((id) => !/^[A-Za-z0-9_-]+$/.test(id))) {
+    throw new ModelAdapterError('invalid_schema', 'Selection target IDs are invalid');
+  }
+  const targetSet = new Set(targetNodeIds);
+  if ([...targetSet].some((id) => !allPageNodes(currentDsl).some((node) => node.id === id))) {
+    throw new ModelAdapterError('invalid_schema', 'Selection target is not present in the current page');
+  }
+  const normalizedInput = { ...input, pageDsl: currentDsl, ...(targetNodeIds.length ? { targetNodeIds } : {}) };
+  const candidate = await requestDraft<RefineDraftResult>(buildRefinePrompt(normalizedInput, skillInstructions), config, refineResultSchema, currentDsl.pageKind, true, true);
   if (candidate.pageDsl.pageId !== currentDsl.pageId || candidate.pageDsl.pageKind !== currentDsl.pageKind) {
     throw new ModelAdapterError('invalid_schema', 'Refinement must preserve the current page ID and page type');
   }
-  if (candidate.pageDsl.pageKind && !hasCompletePageComposition(candidate.pageDsl)) {
+  if (!targetSet.size && hasCompletePageComposition(currentDsl) && !hasCompletePageComposition(candidate.pageDsl)) {
     throw new ModelAdapterError('invalid_schema', 'Refinement must preserve the complete page composition');
   }
+  if (targetSet.size) validateScopedRefinement(input, currentDsl, candidate, targetSet);
   validateRefineIntent(candidate, currentDsl);
   return candidate;
 }

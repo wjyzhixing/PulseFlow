@@ -20,6 +20,84 @@ const allPassed: GateResult[] = (['dsl', 'preview-compile', 'template-build'] as
   .map((id) => ({ id, status: 'passed', blocking: true, diagnostics: [] }));
 
 describe('publication API', () => {
+  it('does not publish any page in a Studio project when a later page fails a release gate', async () => {
+    const app = buildApp({ workspaceToken: 'secret', dbPath: ':memory:', releaseGateRunner: async (candidate) =>
+      candidate.pageDsl.pageId === 'about-dsl'
+        ? [{ id: 'template-build', status: 'failed', blocking: true, diagnostics: [{ code: 'template.failed', path: 'src/generated/Page.vue', message: 'Build failed' }] }]
+        : allPassed
+    });
+    const project = {
+      id: 'file-demo', title: '机器人官网', activePageId: 'home',
+      pages: [
+        { id: 'home', pageDsl: { schemaVersion: 1, pageId: 'home-dsl', title: '首页', nodes: [] }, entityFields: [], semanticQuestions: [] },
+        { id: 'about', pageDsl: { schemaVersion: 1, pageId: 'about-dsl', title: '关于', nodes: [] }, entityFields: [], semanticQuestions: [] }
+      ]
+    };
+    try {
+      await app.inject({ method: 'POST', url: '/api/studio-files', headers, payload: project });
+      const response = await app.inject({ method: 'POST', url: '/api/publications/projects', headers, payload: { fileId: project.id, revision: 1 } });
+      expect(response.statusCode).toBe(422);
+      expect(response.json()).toMatchObject({ ok: false, error: { code: 'publication.gate_failed' }, pages: [
+        { pageId: 'home-dsl', status: 'passed' },
+        { pageId: 'about-dsl', status: 'failed', gates: [{ id: 'template-build', status: 'failed' }] }
+      ] });
+      expect((await app.inject({ method: 'GET', url: '/api/cli/pages/home-dsl/latest', headers })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'GET', url: '/api/cli/pages/about-dsl/latest', headers })).statusCode).toBe(404);
+    } finally { await app.close(); }
+  });
+
+  it('publishes every saved Studio page as one project release after all page gates pass', async () => {
+    const app = buildApp({ workspaceToken: 'secret', dbPath: ':memory:', releaseGateRunner: async () => allPassed });
+    const project = {
+      id: 'file-demo', title: '机器人官网', activePageId: 'home',
+      pages: [
+        { id: 'home', pageDsl: { schemaVersion: 1, pageId: 'home-dsl', title: '首页', nodes: [] }, entityFields: [], semanticQuestions: [] },
+        { id: 'about', pageDsl: { schemaVersion: 1, pageId: 'about-dsl', title: '关于', nodes: [] }, entityFields: [], semanticQuestions: [] }
+      ]
+    };
+    try {
+      await app.inject({ method: 'POST', url: '/api/studio-files', headers, payload: project });
+      const response = await app.inject({ method: 'POST', url: '/api/publications/projects', headers, payload: { fileId: project.id, revision: 1 } });
+      expect(response.statusCode).toBe(201);
+      expect(response.json().data).toMatchObject({ fileId: project.id, title: project.title, publications: [
+        { pageId: 'home-dsl', gates: allPassed },
+        { pageId: 'about-dsl', gates: allPassed }
+      ] });
+      expect((await app.inject({ method: 'GET', url: '/api/cli/pages/home-dsl/latest', headers })).statusCode).toBe(200);
+      expect((await app.inject({ method: 'GET', url: '/api/cli/pages/about-dsl/latest', headers })).statusCode).toBe(200);
+    } finally { await app.close(); }
+  });
+
+  it('rejects a project release when the saved Studio file changes while its gates are running', async () => {
+    let signalGate: () => void = () => undefined;
+    let releaseGate: () => void = () => undefined;
+    const gateStarted = new Promise<void>((resolve) => { signalGate = resolve; });
+    const gateHold = new Promise<void>((resolve) => { releaseGate = resolve; });
+    const app = buildApp({ workspaceToken: 'secret', dbPath: ':memory:', releaseGateRunner: async () => {
+      signalGate();
+      await gateHold;
+      return allPassed;
+    } });
+    const project = {
+      id: 'file-demo', title: '机器人官网', activePageId: 'home',
+      pages: [
+        { id: 'home', pageDsl: { schemaVersion: 1, pageId: 'home-dsl', title: '首页', nodes: [] }, entityFields: [], semanticQuestions: [] },
+        { id: 'about', pageDsl: { schemaVersion: 1, pageId: 'about-dsl', title: '关于', nodes: [] }, entityFields: [], semanticQuestions: [] }
+      ]
+    };
+    try {
+      await app.inject({ method: 'POST', url: '/api/studio-files', headers, payload: project });
+      const publishing = app.inject({ method: 'POST', url: '/api/publications/projects', headers, payload: { fileId: project.id, revision: 1 } });
+      await gateStarted;
+      const changed = await app.inject({ method: 'PUT', url: `/api/studio-files/${project.id}`, headers, payload: { ...project, title: '已修改官网', revision: 1 } });
+      expect(changed.statusCode).toBe(200);
+      releaseGate();
+      expect((await publishing).statusCode).toBe(409);
+      expect((await app.inject({ method: 'GET', url: '/api/cli/pages/home-dsl/latest', headers })).statusCode).toBe(404);
+      expect((await app.inject({ method: 'GET', url: '/api/cli/pages/about-dsl/latest', headers })).statusCode).toBe(404);
+    } finally { releaseGate(); await app.close(); }
+  });
+
   it('does not publish an obsolete snapshot when a draft changes during release gates', async () => {
     let signalGate: () => void = () => undefined;
     let releaseGate: () => void = () => undefined;

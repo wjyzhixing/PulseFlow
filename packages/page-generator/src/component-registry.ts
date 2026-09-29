@@ -97,7 +97,51 @@ const Image = defineComponent({
   }
 });
 
+const Frame = defineComponent({
+  name: 'PulseFlowDesignFrame',
+  props: {
+    name: String,
+    direction: { type: String, default: 'column' },
+    gap: { type: Number, default: 0 },
+    padding: { type: Number, default: 0 },
+    clipContent: { type: Boolean, default: true },
+    alignItems: { type: String, default: 'stretch' },
+    justifyContent: { type: String, default: 'start' }
+  },
+  setup(props, { slots }) {
+    const align: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', stretch: 'stretch' };
+    const justify: Record<string, string> = { start: 'flex-start', center: 'center', end: 'flex-end', 'space-between': 'space-between' };
+    return () => h('div', {
+      class: 'pf-frame',
+      'data-frame-name': props.name,
+      style: { position: 'relative', display: 'flex', flexDirection: props.direction, gap: `${props.gap}px`, padding: `${props.padding}px`, overflow: props.clipContent ? 'hidden' : undefined, alignItems: align[props.alignItems], justifyContent: justify[props.justifyContent] }
+    }, slots.default?.());
+  }
+});
+
+const Text = defineComponent({
+  name: 'PulseFlowDesignText',
+  props: { text: { type: String, required: true } },
+  setup(props) { return () => h('p', { class: 'pf-text' }, props.text); }
+});
+
+const Shape = defineComponent({
+  name: 'PulseFlowDesignShape',
+  props: { shape: { type: String, required: true }, stroke: { type: String, default: '#1F1F1F' }, strokeWidth: { type: Number, default: 1 } },
+  setup(props) {
+    return () => props.shape === 'line'
+      ? h('svg', { class: ['pf-shape', 'pf-shape--line'], viewBox: '0 0 100 100', preserveAspectRatio: 'none', role: 'presentation', 'aria-hidden': 'true', style: { height: '1px' } }, [
+        h('line', { x1: 0, y1: 0, x2: 100, y2: 100, stroke: props.stroke, strokeWidth: props.strokeWidth, vectorEffect: 'non-scaling-stroke' })
+      ])
+      : h('div', {
+        class: ['pf-shape', `pf-shape--${props.shape}`],
+        role: 'presentation',
+        style: props.shape === 'ellipse' ? { borderRadius: '50%' } : undefined
+      });
+  }
+});
+
 export const componentRegistry: Readonly<Record<ComponentType, Component>> = Object.freeze({
   Card, PageHeader, Form, FormItem: Form.Item, Input, Select, Button, Table, Row, Col, Tag, Badge,
-  SiteNavigation, Hero, ContentSection, FeatureCard, MetricCard, CallToAction, Image
+  SiteNavigation, Hero, ContentSection, FeatureCard, MetricCard, CallToAction, Image, Frame, Text, Shape
 });

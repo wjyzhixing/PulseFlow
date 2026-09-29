@@ -1,5 +1,5 @@
 import type Database from 'better-sqlite3';
-import type { Draft } from '@pulseflow/contracts';
+import type { Draft, StudioFile } from '@pulseflow/contracts';
 import type { GeneratedFile } from '@pulseflow/page-generator';
 
 export interface Publication {
@@ -28,6 +28,10 @@ interface CurrentDraftRow {
 
 export class PublicationStaleDraftError extends Error {
   constructor() { super('Draft changed during release checks'); }
+}
+
+export class PublicationStaleStudioFileError extends Error {
+  constructor() { super('Studio file changed during release checks'); }
 }
 
 function publication(row: VersionRow | undefined): Publication | null {
@@ -65,6 +69,38 @@ export class PublicationRepository {
         JSON.stringify(draft.pageDsl), JSON.stringify(draft.entityFields), JSON.stringify(draft.semanticQuestions),
         JSON.stringify(manifest), JSON.stringify(files));
       return { pageId: draft.pageId, versionId, createdAt, manifest, files };
+    }).immediate();
+  }
+
+  createProject(file: StudioFile, records: Array<{ draft: Draft; files: GeneratedFile[] }>): Publication[] {
+    return this.db.transaction(() => {
+      const current = this.db.prepare('SELECT revision, pagesJson FROM studio_files WHERE id = ?').get(file.id) as
+        { revision: number; pagesJson: string } | undefined;
+      if (!current || current.revision !== file.revision || current.pagesJson !== JSON.stringify(file.pages)) {
+        throw new PublicationStaleStudioFileError();
+      }
+      return records.map(({ draft, files }) => {
+        const draftJson = {
+          pageDslJson: JSON.stringify(draft.pageDsl),
+          entityFieldsJson: JSON.stringify(draft.entityFields),
+          semanticQuestionsJson: JSON.stringify(draft.semanticQuestions)
+        };
+        this.db.prepare(`INSERT INTO drafts (id, pageId, pageDslJson, entityFieldsJson, semanticQuestionsJson, status, updatedAt)
+          VALUES (?, ?, ?, ?, ?, 'confirmed', ?)`).run(draft.id, draft.pageId, draftJson.pageDslJson,
+          draftJson.entityFieldsJson, draftJson.semanticQuestionsJson, new Date().toISOString());
+        const previous = this.db.prepare('SELECT MAX(versionNumber) AS last FROM publication_versions WHERE pageId = ?').get(draft.pageId) as { last: number | null };
+        const number = (previous.last ?? 0) + 1;
+        const versionId = `${draft.pageId}-v${number}`;
+        const createdAt = new Date().toISOString();
+        const manifestFile = files.find((item) => item.path === 'src/generated/manifest.json');
+        if (!manifestFile) throw new Error('Generated manifest missing');
+        const manifest = JSON.parse(manifestFile.content) as Record<string, unknown>;
+        this.db.prepare(`INSERT INTO publication_versions
+          (versionId, pageId, draftId, versionNumber, createdAt, pageDslJson, entityFieldsJson, semanticQuestionsJson, manifestJson, filesJson)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`).run(versionId, draft.pageId, draft.id, number, createdAt,
+          draftJson.pageDslJson, draftJson.entityFieldsJson, draftJson.semanticQuestionsJson, JSON.stringify(manifest), JSON.stringify(files));
+        return { pageId: draft.pageId, versionId, createdAt, manifest, files };
+      });
     }).immediate();
   }
 

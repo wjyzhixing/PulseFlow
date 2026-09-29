@@ -40,7 +40,7 @@ describe('buildPrompt', () => {
   it('documents strict component props and node container constraints', () => {
     const prompt = buildPrompt({ sections: [] });
     expect(prompt.system).toContain('Input: {placeholder?, disabled?}');
-    expect(prompt.system).toContain('Button: {label, variant?, event?}');
+    expect(prompt.system).toContain('Button: {label, variant?, event?, targetSectionId?}');
     expect(prompt.system).toContain('props must contain no other properties');
     expect(prompt.system).toContain('Only Card, Form, FormItem, Row, and Col can have children');
     expect(prompt.system).toContain('Every node must set slots to an array, usually []');

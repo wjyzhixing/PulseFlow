@@ -9,6 +9,7 @@ const modelCredential = ['e2e', 'placeholder', 'key'].join('-');
 const app = buildApp({
   workspaceToken: process.env.PULSEFLOW_WORKSPACE_TOKEN ?? ['e2e', 'placeholder', 'token'].join('-'),
   dbPath: join(directory, 'e2e.sqlite'),
+  sessionRateLimit: { max: 50, timeWindow: '1 minute' },
   modelConfig: {
     baseUrl: 'http://deterministic-model.invalid/v1', model: 'pulseflow-e2e-fake',
     apiKey: modelCredential, timeoutMs: 1000, fetchImpl: createDeterministicModelFetch()

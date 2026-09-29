@@ -29,6 +29,161 @@ describe('design store', () => {
     expect(() => store.addNode('script' as never, null, 0)).toThrow(/unsupported/i);
   });
 
+  it('supports additive and toggle selection for canvas and layer multi-select', () => {
+    store.selectNode('first');
+    store.selectNode('second', true);
+    expect(store.selectedNodeIds.value).toEqual(['first', 'second']);
+    expect(store.selectedNodeId.value).toBe('second');
+
+    store.selectNode('first', true);
+    expect(store.selectedNodeIds.value).toEqual(['second']);
+    store.selectNode('missing', true);
+    expect(store.selectedNodeIds.value).toEqual(['second']);
+  });
+
+  it('copies the selected parent tree and pastes it as one undoable DSL edit', () => {
+    const designPage = {
+      ...page(),
+      nodes: [{
+        id: 'frame', type: 'Frame' as const, props: { name: '卡片' }, slots: [],
+        design: { position: { mode: 'absolute' as const, x: 24, y: 40 }, size: { width: 320, height: 200 } },
+        children: [{
+          id: 'label', type: 'Text' as const, props: { text: '标题' }, slots: [], children: [],
+          design: { position: { mode: 'absolute' as const, x: 12, y: 16 }, size: { width: 'hug' as const, height: 'hug' as const } }
+        }]
+      }]
+    };
+    store = createDesignStore({ dsl: designPage, entityFields: fields });
+    store.selectNode('frame');
+    const copied = store.copyNodes(['frame', 'label']);
+    expect(copied).toHaveLength(1);
+    expect(store.pasteNodes(copied).ok).toBe(true);
+
+    const pasted = store.dsl.value.nodes[1];
+    expect(pasted?.id).toBe('frame-copy');
+    expect(pasted?.design?.position).toEqual({ mode: 'absolute', x: 40, y: 56 });
+    expect(pasted?.children[0]?.id).toBe('label-copy');
+    expect(store.selectedNodeId.value).toBe('frame-copy');
+    expect(store.undo()).toBe(true);
+    expect(store.dsl.value.nodes).toHaveLength(1);
+    expect(store.redo()).toBe(true);
+    expect(store.dsl.value.nodes).toHaveLength(2);
+  });
+
+  it('duplicates a multi-selection with unique IDs and selects all new roots', () => {
+    expect(store.duplicateNodes(['first', 'second']).ok).toBe(true);
+    expect(store.dsl.value.nodes[0]?.children.map((node) => node.id)).toEqual([
+      'first', 'first-copy', 'second', 'second-copy'
+    ]);
+    expect(store.selectedNodeIds.value).toEqual(['first-copy', 'second-copy']);
+    expect(store.undo()).toBe(true);
+    expect(store.dsl.value.nodes[0]?.children.map((node) => node.id)).toEqual(['first', 'second']);
+  });
+
+  it('duplicates dragged layers at the requested positions as one undoable edit', () => {
+    const designPage = { ...page(), nodes: [{
+      id: 'frame', type: 'Frame' as const, props: { name: '画板' }, slots: [],
+      design: { position: { mode: 'absolute' as const, x: 16, y: 24 }, size: { width: 240, height: 120 } },
+      children: [{ id: 'label', type: 'Text' as const, props: { text: '标题' }, slots: [], children: [] }]
+    }] };
+    store = createDesignStore({ dsl: designPage, entityFields: fields });
+
+    const result = store.duplicateNodesAt([{ nodeId: 'frame', position: { mode: 'absolute', x: 48, y: 64 } }]);
+
+    expect(result.ok).toBe(true);
+    expect(store.dsl.value.nodes.map((node) => node.design?.position)).toEqual([
+      { mode: 'absolute', x: 16, y: 24 }, { mode: 'absolute', x: 48, y: 64 }
+    ]);
+    expect(store.dsl.value.nodes[1]?.children[0]?.id).toBe('label-copy');
+    expect(store.selectedNodeId.value).toBe('frame-copy');
+    expect(store.undo()).toBe(true);
+    expect(store.dsl.value.nodes).toHaveLength(1);
+  });
+
+  it('applies a multi-layer move as one validated history entry', () => {
+    expect(store.updateNodesDesign([
+      { nodeId: 'first', patch: { position: { mode: 'absolute', x: 16, y: 24 } } },
+      { nodeId: 'second', patch: { position: { mode: 'absolute', x: 48, y: 56 } } }
+    ])).toBe(true);
+    expect(store.dsl.value.nodes[0]?.children.map((node) => node.design?.position)).toEqual([
+      { mode: 'absolute', x: 16, y: 24 },
+      { mode: 'absolute', x: 48, y: 56 }
+    ]);
+
+    expect(store.undo()).toBe(true);
+    expect(store.dsl.value.nodes[0]?.children.map((node) => node.design?.position)).toEqual([undefined, undefined]);
+    expect(store.redo()).toBe(true);
+    expect(store.dsl.value.nodes[0]?.children[1]?.design?.position).toEqual({ mode: 'absolute', x: 48, y: 56 });
+  });
+
+  it('validates, immutably commits, and restores design tokens through undo and redo', () => {
+    const added = store.addNode('Text', null, 1);
+    expect(added.ok).toBe(true);
+    const original = store.dsl.value;
+    expect(store.updateNodeDesign(added.nodeId!, { position: { mode: 'absolute', x: 24, y: 48 }, fill: '#AABBCC' })).toBe(true);
+    expect(store.dsl.value).not.toBe(original);
+    expect(store.selectedNode.value?.design).toMatchObject({ position: { mode: 'absolute', x: 24, y: 48 }, fill: '#AABBCC' });
+    expect(store.updateNodeDesign(added.nodeId!, { fill: 'url(javascript:alert(1))' as never })).toBe(false);
+    expect(store.updateNodeDesign(added.nodeId!, { position: { mode: 'absolute', x: 9000, y: 0 } })).toBe(false);
+    expect(store.undo()).toBe(true);
+    expect(store.selectedNode.value?.design).toMatchObject({ size: { width: 'hug', height: 'hug' } });
+    expect(store.selectedNode.value?.design?.position).toBeUndefined();
+    expect(store.redo()).toBe(true);
+    expect(store.selectedNode.value?.design?.position?.x).toBe(24);
+  });
+
+  it('aligns a design layer against its parent and records alignment in the DSL history', () => {
+    const added = store.addNode('Frame', null, 1, { position: { mode: 'absolute', x: 0, y: 0 } });
+    expect(added.ok).toBe(true);
+    expect(store.alignNode(added.nodeId!, 'center-x')).toBe(true);
+    expect(store.selectedNode.value?.design?.position).toEqual({ mode: 'absolute', x: 400, y: 0 });
+    expect(store.alignNode(added.nodeId!, 'right')).toBe(true);
+    expect(store.selectedNode.value?.design?.position).toEqual({ mode: 'absolute', x: 800, y: 0 });
+    expect(store.alignNode(added.nodeId!, 'center-y')).toBe(true);
+    expect(store.selectedNode.value?.design?.position).toEqual({ mode: 'absolute', x: 800, y: 200 });
+    expect(store.alignNode(added.nodeId!, 'bottom')).toBe(true);
+    expect(store.selectedNode.value?.design?.position).toEqual({ mode: 'absolute', x: 800, y: 400 });
+    expect(store.alignNode(added.nodeId!, 'left')).toBe(true);
+    expect(store.alignNode(added.nodeId!, 'top')).toBe(true);
+    expect(store.undo()).toBe(true);
+    expect(store.selectedNode.value?.design?.position).toEqual({ mode: 'absolute', x: 0, y: 0 });
+  });
+
+  it('requires measured geometry to align hug-sized layers and uses parent-local bounds', () => {
+    const added = store.addNode('Text', null, 1, { position: { mode: 'absolute', x: 0, y: 0 } });
+    expect(added.ok).toBe(true);
+    const before = store.dsl.value;
+
+    expect(store.alignNode(added.nodeId!, 'center-x')).toBe(false);
+    expect(store.dsl.value).toBe(before);
+    expect(store.alignNode(added.nodeId!, 'center-x', {
+      nodeWidth: 100, nodeHeight: 24, parentWidth: 1280, parentHeight: 720
+    })).toBe(true);
+    expect(store.selectedNode.value?.design?.position).toEqual({ mode: 'absolute', x: 590, y: 0 });
+  });
+
+  it('aligns a measured hug layer within a nested sized parent', () => {
+    const nestedPage = { ...page(), nodes: [{
+      id: 'frame', type: 'Frame' as const, props: { name: '容器' }, slots: [],
+      design: { size: { width: 500, height: 300 } },
+      children: [{ id: 'label', type: 'Text' as const, props: { text: '标题' }, slots: [], children: [], design: { size: { width: 'hug' as const, height: 'hug' as const }, position: { mode: 'absolute' as const, x: 0, y: 0 } } }]
+    }] };
+    store = createDesignStore({ dsl: nestedPage, entityFields: fields });
+
+    expect(store.alignNode('label', 'center-y', {
+      nodeWidth: 48, nodeHeight: 24, parentWidth: 500, parentHeight: 300
+    })).toBe(true);
+    expect(store.dsl.value.nodes[0]?.children[0]?.design?.position).toEqual({ mode: 'absolute', x: 0, y: 138 });
+  });
+
+  it('adds palette components at validated canvas targets', () => {
+    const added = store.addNodeToTarget('Tag', { parentId: 'card', index: 1 });
+    expect(added.ok).toBe(true);
+    expect(store.dsl.value.nodes[0]?.children.map((node) => node.type)).toEqual(['Input', 'Tag', 'Button']);
+    const rejected = store.addNodeToTarget('Card', { parentId: 'first', index: 0 });
+    expect(rejected).toMatchObject({ ok: false, reason: '该图层不能包含其他页面对象。' });
+  });
+
   it('adds an image and accepts safe generated asset IDs while rejecting external URLs or invalid display properties', () => {
     const added = store.addNode('Image', null, 0);
     expect(added.ok).toBe(true);
@@ -39,6 +194,32 @@ describe('design store', () => {
     expect(store.updateNodeProps(added.nodeId!, { assetId: 'https://example.test/image.png' })).toBe(false);
     expect(store.updateNodeProps(added.nodeId!, { assetId: 'asset-generated_123' })).toBe(true);
     expect(store.updateNodeProps(added.nodeId!, { aspectRatio: '2:1' })).toBe(false);
+  });
+
+  it('drops a library asset as a positioned Image node in one undoable DSL edit', () => {
+    const designPage = { ...page(), nodes: [{
+      id: 'frame', type: 'Frame' as const, props: { name: '画板' }, slots: [],
+      design: { position: { mode: 'absolute' as const, x: 0, y: 0 }, size: { width: 640, height: 480 } },
+      children: [{ id: 'title', type: 'Text' as const, props: { text: '机器人' }, slots: [], children: [] }]
+    }] };
+    store = createDesignStore({ dsl: designPage, entityFields: fields });
+
+    const result = store.insertImageAsset(
+      'asset-workflow', '机器人主视觉', { parentId: 'frame', index: 1 },
+      { mode: 'absolute', x: 48, y: 72 }
+    );
+
+    expect(result.ok).toBe(true);
+    expect(store.dsl.value.nodes[0]?.children[1]).toMatchObject({
+      id: 'generated-image-1', type: 'Image', props: {
+        assetId: 'asset-workflow', alt: '机器人主视觉', fit: 'cover', aspectRatio: '16:9'
+      }, design: { position: { mode: 'absolute', x: 48, y: 72 }, size: { width: 320, height: 180 } }
+    });
+    expect(store.selectedNodeId.value).toBe('generated-image-1');
+    expect(store.undo()).toBe(true);
+    expect(store.dsl.value.nodes[0]?.children.map((node) => node.id)).toEqual(['title']);
+    expect(store.redo()).toBe(true);
+    expect(store.dsl.value.nodes[0]?.children[1]?.props.assetId).toBe('asset-workflow');
   });
 
   it('adds and edits a website conversion block linked to an existing section', () => {
@@ -72,12 +253,60 @@ describe('design store', () => {
     expect(store.dsl.value).toBe(before);
   });
 
+  it('uses validated move targets and blocks moves while the source buffer is invalid', () => {
+    const cycle = store.moveNodeToTarget('card', { parentId: 'first', index: 0 });
+    expect(cycle).toMatchObject({ ok: false, reason: '不能把图层放进自身或自己的子图层中。' });
+    const before = store.dsl.value;
+    store.updateSourceBuffer('{');
+    expect(store.moveNodeToTarget('first', { parentId: 'card', index: 1 })).toMatchObject({ ok: false });
+    expect(store.dsl.value).toBe(before);
+  });
+
   it('updates allowed properties and rejects unknown properties', () => {
     expect(store.updateNodeProps('card', { title: '重点客户' })).toBe(true);
     expect(store.selectedNode.value).toBeNull();
     expect(store.dsl.value.nodes[0]?.props).toEqual({ title: '重点客户' });
     expect(store.updateNodeProps('card', { dangerouslySetInnerHTML: '<script />' })).toBe(false);
     expect(store.dsl.value.nodes[0]?.props).toEqual({ title: '重点客户' });
+  });
+
+  it('updates only validated page-level design properties immutably', () => {
+    const before = store.dsl.value;
+    expect(store.updatePage({ title: '客户工作台', pageKind: 'website', theme: { colorScheme: 'teal', cornerStyle: 'soft' } })).toBe(true);
+    expect(store.dsl.value).toMatchObject({ title: '客户工作台', pageKind: 'website', theme: { colorScheme: 'teal', cornerStyle: 'soft' } });
+    expect(before).toMatchObject({ title: '订单工作台' });
+    const changed = store.dsl.value;
+    expect(store.updatePage({ title: '' })).toBe(false);
+    expect(store.updatePage({ pageKind: 'unknown' as never })).toBe(false);
+    expect(store.updatePage({ theme: { colorScheme: 'magenta' } as never })).toBe(false);
+    expect(store.dsl.value).toBe(changed);
+  });
+
+  it('undoes and redoes validated store edits without recording selection state', () => {
+    store.selectNode('first');
+    expect(store.updateNodeProps('first', { placeholder: '新的提示' })).toBe(true);
+    store.selectNode('second');
+
+    expect(store.canUndo.value).toBe(true);
+    expect(store.undo()).toBe(true);
+    expect(store.dsl.value.nodes[0]?.children[0]?.props.placeholder).toBe('第一个');
+    expect(store.selectedNodeId.value).toBe('second');
+    expect(store.canRedo.value).toBe(true);
+    expect(store.redo()).toBe(true);
+    expect(store.dsl.value.nodes[0]?.children[0]?.props.placeholder).toBe('新的提示');
+  });
+
+  it('records an accepted replacement as one step and leaves failed candidates out of history', () => {
+    const candidate = { ...page(), title: 'AI 修改后的页面' };
+    expect(store.replaceDraft(candidate, [{ ...fields[0]!, label: '客户名称' }])).toBe(true);
+    expect(store.undo()).toBe(true);
+    expect(store.dsl.value.title).toBe('订单工作台');
+    expect(store.entityFields[0]?.label).toBe('企业名称');
+    expect(store.redo()).toBe(true);
+    expect(store.dsl.value.title).toBe('AI 修改后的页面');
+    expect(store.replaceDraft({ ...candidate, title: '' }, fields)).toBe(false);
+    expect(store.canUndo.value).toBe(true);
+    expect(store.dsl.value.title).toBe('AI 修改后的页面');
   });
 
   it('adds and updates entity fields immutably and notifies the draft owner', () => {
@@ -109,7 +338,7 @@ describe('design store', () => {
     const before = store.entityFields;
     expect(store.updateEntityField('company', { key: other.key })).toBe(false);
     expect(store.updateEntityField('company', { label: '<script>bad</script>' })).toBe(false);
-    expect(store.updateEntityField('company', { rules: [{ kind: 'format', format: 'email' } as never] })).toBe(false);
+    expect(store.updateEntityField('company', { rules: [{ kind: 'format', format: 'unsupported' } as never] })).toBe(false);
     expect(store.entityFields).toEqual(before);
     expect(store.entityFields[0]?.label).toBe('企业名称');
   });
@@ -199,7 +428,7 @@ describe('design store', () => {
 
   it('rejects invalid initial DSL and impossible mutation targets', () => {
     expect(() => createDesignStore({ dsl: { ...page(), schemaVersion: 2 as never }, entityFields: fields })).toThrow(/invalid initial/i);
-    expect(store.addNode('Button', 'first', 0)).toEqual({ ok: false });
+    expect(store.addNode('Button', 'first', 0)).toMatchObject({ ok: false });
     expect(store.removeNode('missing')).toBe(false);
     expect(store.moveNode('missing', null, 0)).toBe(false);
     expect(store.updateNodeProps('missing', { label: 'x' })).toBe(false);

@@ -10,6 +10,48 @@ describe('validatePageDsl', () => {
     expect(validate(validPage)).toMatchObject({ ok: true, dsl: validPage, diagnostics: [] });
   });
 
+  it('accepts only named semantic page theme tokens', () => {
+    expect(validate({ ...validPage, theme: { colorScheme: 'teal', cornerStyle: 'soft' } })).toMatchObject({ ok: true });
+    expect(validate({ ...validPage, theme: { colorScheme: 'url(javascript:alert(1))' } }).ok).toBe(false);
+    expect(validate({ ...validPage, theme: { colorScheme: 'teal', css: 'color:red' } }).ok).toBe(false);
+  });
+
+  it('accepts Figma-style Frame, Text and Shape objects with bounded design tokens', () => {
+    const page = { ...validPage, nodes: [
+      { ...node('frame', 'Frame', { name: 'Hero 内容', direction: 'column', gap: 16, padding: 24 }), design: {
+        position: { mode: 'absolute', x: 64, y: 32 }, size: { width: 720, height: 'hug' }, rotation: 0,
+        opacity: 1, fill: '#F0F5FF', stroke: '#1677FF', strokeWidth: 1, cornerRadius: 12
+      }, children: [
+        { ...node('headline', 'Text', { text: '智能机器人，让现场协作更简单' }), design: {
+          size: { width: 'fill', height: 'hug' },
+          typography: { fontFamily: 'sans', fontSize: 40, fontWeight: 700, lineHeight: 1.2, letterSpacing: -0.5, textAlign: 'left', color: '#152347' }
+        } },
+        node('shape', 'Shape', { shape: 'ellipse' })
+      ], slots: [] }
+    ] };
+    expect(validate(page)).toMatchObject({ ok: true });
+  });
+
+  it.each([
+    ['x outside canvas coordinate range', { position: { mode: 'absolute', x: 9000, y: 0 } }, 'nodes[0].design.position.x'],
+    ['negative width', { size: { width: -1, height: 20 } }, 'nodes[0].design.size.width'],
+    ['opacity above one', { opacity: 1.1 }, 'nodes[0].design.opacity'],
+    ['arbitrary CSS color', { fill: 'url(javascript:alert(1))' }, 'nodes[0].design.fill'],
+    ['unknown CSS property', { cssText: 'position:fixed' }, 'nodes[0].design.cssText']
+  ])('rejects unsafe design token: %s', (_name, design, path) => {
+    const result = validate({ ...validPage, nodes: [{ ...node('frame', 'Frame', { name: 'frame' }), design }] });
+    expect(result.ok).toBe(false);
+    expect(result.diagnostics).toContainEqual(expect.objectContaining({ path }));
+  });
+
+  it('allows nested Frame objects but rejects children under Text and Shape', () => {
+    const frame = node('child-frame', 'Frame', { name: 'child' });
+    expect(validate({ ...validPage, nodes: [{ ...node('parent', 'Frame', { name: 'parent' }), children: [frame] }] }).ok).toBe(true);
+    for (const type of ['Text', 'Shape']) {
+      expect(validate({ ...validPage, nodes: [{ ...node('leaf', type, type === 'Text' ? { text: '文字' } : { shape: 'rectangle' }), children: [frame] }] }).ok).toBe(false);
+    }
+  });
+
   it('accepts image assets and safe section backgrounds', () => {
     const page = { ...validPage, nodes: [
       node('hero', 'Hero', { title: 'Welcome', subtitle: 'A page', backgroundAssetId: 'asset-analytics', backgroundOverlay: 'dark' }),

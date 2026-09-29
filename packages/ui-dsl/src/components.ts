@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { assetIdSchema, identifierSchema, safeTextSchema } from './schema.js';
+import { assetIdSchema, editableTextSchema, identifierSchema, safeTextSchema } from './schema.js';
 
 const safeText = safeTextSchema;
 const optionalText = safeText.optional();
@@ -16,13 +16,26 @@ function requireAssetForVisibleOverlay(
 }
 
 export const componentProps = {
+  Frame: z.strictObject({
+    name: optionalText,
+    direction: z.enum(['row', 'column']).optional(),
+    gap: z.number().int().min(0).max(256).optional(),
+    padding: z.number().int().min(0).max(256).optional(),
+    clipContent: z.boolean().optional(),
+    alignItems: z.enum(['start', 'center', 'end', 'stretch']).optional(),
+    justifyContent: z.enum(['start', 'center', 'end', 'space-between']).optional()
+  }),
+  Text: z.strictObject({ text: editableTextSchema }),
+  Shape: z.strictObject({ shape: z.enum(['rectangle', 'ellipse', 'line']) }),
   Card: z.strictObject({ title: optionalText }),
   PageHeader: z.strictObject({ title: safeText, subtitle: optionalText }),
   Form: z.strictObject({ layout: z.enum(['horizontal', 'vertical', 'inline']).optional() }),
   FormItem: z.strictObject({ fieldId: identifierSchema, label: optionalText }),
   Input: z.strictObject({ placeholder: optionalText, disabled: z.boolean().optional() }),
   Select: z.strictObject({ options: z.array(z.strictObject({ label: safeText, value: z.string() })), placeholder: optionalText }),
-  Button: z.strictObject({ label: safeText, variant: z.enum(['primary', 'default', 'dashed', 'text', 'link']).optional(), event: identifierSchema.optional() }),
+  Button: z.strictObject({ label: editableTextSchema, variant: z.enum(['primary', 'default', 'dashed', 'text', 'link']).optional(), event: identifierSchema.optional(), targetSectionId: identifierSchema.optional() }).superRefine((value, context) => {
+    if (value.event && value.targetSectionId) context.addIssue({ code: z.ZodIssueCode.custom, path: ['targetSectionId'], message: 'A button cannot trigger an event and navigate to a section at the same time' });
+  }),
   Table: z.strictObject({ columns: z.array(z.strictObject({ field: identifierSchema, title: safeText })).min(1), dataSourceKey: identifierSchema }),
   Row: z.strictObject({ gutter: z.number().int().min(0).max(48).optional() }),
   Col: z.strictObject({ span: z.number().int().min(1).max(24) }),
@@ -64,7 +77,7 @@ export function isComponentType(value: string): value is ComponentType {
   return Object.hasOwn(componentProps, value);
 }
 
-export const containerComponents = new Set<ComponentType>(['Card', 'Form', 'FormItem', 'Row', 'Col', 'ContentSection']);
+export const containerComponents = new Set<ComponentType>(['Card', 'Form', 'FormItem', 'Row', 'Col', 'ContentSection', 'Frame']);
 
 export const tableBodyCellSchema = z.strictObject({
   name: z.literal('bodyCell'),

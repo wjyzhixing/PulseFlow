@@ -33,4 +33,5 @@ describe('blank drafts', () => {
 
     expect(getDraftSession()?.fieldsText).toBe('[]');
   });
+
 });

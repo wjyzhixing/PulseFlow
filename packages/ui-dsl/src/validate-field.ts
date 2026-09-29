@@ -30,6 +30,10 @@ export function validateFieldValue(field: EntityField, value: unknown): Diagnost
       return typeof value === 'string' && /^1[3-9]\d{9}$/.test(value) ? []
         : [diagnostic('field.format.phone', field.key, `${field.label} must be a valid mobile number`)];
     }
+    if (rule.format === 'email') {
+      return typeof value === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value) ? []
+        : [diagnostic('field.format.email', field.key, `${field.label} must be a valid email address`)];
+    }
     return typeof value === 'string' && isCreditCode(value) ? []
       : [diagnostic('field.format.creditCode', field.key, `${field.label} must be a valid unified social credit code`)];
   });

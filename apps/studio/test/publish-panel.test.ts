@@ -31,4 +31,19 @@ describe('PublishPanel', () => {
     expect(wrapper.text()).toContain('发布失败');
     expect(wrapper.get('[data-testid="publish-action"]').attributes('disabled')).toBeDefined();
   });
+
+  it('lists each published project page and keeps failure diagnostics attached to their page', () => {
+    const wrapper = mount(PublishPanel, { props: {
+      gates: [], versionId: '', pending: false, error: '',
+      pages: [
+        { pageId: 'home', status: 'passed', versionId: 'home-v1', gates: [passed('dsl')] },
+        { pageId: 'about', status: 'failed', gates: [{ id: 'template-build', status: 'failed', blocking: true,
+          diagnostics: [{ code: 'build.failed', path: 'Page.vue', message: '构建失败' }] }]
+        }
+      ]
+    } });
+    expect(wrapper.get('[data-testid="project-page-results"]').text()).toContain('home-v1');
+    expect(wrapper.get('[data-testid="project-page-results"]').text()).toContain('about');
+    expect(wrapper.get('[data-testid="project-page-results"]').text()).toContain('Page.vue：构建失败');
+  });
 });

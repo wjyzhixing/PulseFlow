@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { componentProps, containerComponents, isComponentType, tableBodyCellSchema } from './components.js';
 import { diagnostic, zodDiagnostics } from './diagnostics.js';
-import { conditionSchema, entityFieldSchema, identifierSchema, pageDslSchema } from './schema.js';
+import { conditionSchema, entityFieldSchema, identifierSchema, nodeDesignSchema, pageDslSchema } from './schema.js';
 import type { Diagnostic, EntityField, PageDsl, ValidationResult } from './types.js';
 
 type RecordValue = Record<string, unknown>;
@@ -12,6 +12,9 @@ function isRecord(value: unknown): value is RecordValue {
 
 interface NodeContext {
   ids: Set<string>;
+  frameIds: Set<string>;
+  prototypeReferences: Array<{ sourceNodeId: string; targetNodeId: string; path: string }>;
+  colorVariableIds: Set<string>;
   sectionIds: Set<string>;
   sectionReferences: Array<{ sectionId: string; path: string }>;
   fields?: Map<string, EntityField>;
@@ -84,8 +87,28 @@ function validateNode(value: unknown, path: string, context: NodeContext, depth:
   }
   context.seen.add(value);
   for (const key of Object.keys(value)) {
-    if (!['id', 'type', 'props', 'children', 'slots', 'condition'].includes(key)) {
+    if (!['id', 'type', 'props', 'children', 'slots', 'condition', 'design'].includes(key)) {
       context.diagnostics.push(diagnostic('node.property.unsupported', `${path}.${key}`, `Unsupported node property: ${key}`));
+    }
+  }
+
+  if (Object.hasOwn(value, 'design')) {
+    const design = nodeDesignSchema.safeParse(value.design);
+    if (!design.success) context.diagnostics.push(...zodDiagnostics(design.error.issues, `${path}.design`, 'design.invalid'));
+    else {
+      if (design.data.fill && design.data.fillVariableId) {
+        context.diagnostics.push(diagnostic('design.color.conflict', `${path}.design.fillVariableId`, 'A fill cannot use both a literal color and a color variable'));
+      }
+      if (design.data.fillVariableId && !context.colorVariableIds.has(design.data.fillVariableId)) {
+        context.diagnostics.push(diagnostic('variable.unresolved', `${path}.design.fillVariableId`, `Unknown color variable: ${design.data.fillVariableId}`));
+      }
+      const typography = design.data.typography;
+      if (typography?.color && typography.colorVariableId) {
+        context.diagnostics.push(diagnostic('design.color.conflict', `${path}.design.typography.colorVariableId`, 'Text color cannot use both a literal color and a color variable'));
+      }
+      if (typography?.colorVariableId && !context.colorVariableIds.has(typography.colorVariableId)) {
+        context.diagnostics.push(diagnostic('variable.unresolved', `${path}.design.typography.colorVariableId`, `Unknown color variable: ${typography.colorVariableId}`));
+      }
     }
   }
 
@@ -103,6 +126,18 @@ function validateNode(value: unknown, path: string, context: NodeContext, depth:
     return;
   }
   const type = value.type;
+  if (type === 'Frame' && typeof value.id === 'string') context.frameIds.add(value.id);
+  const designRecord = isRecord(value.design) ? value.design : null;
+  if (designRecord && Object.hasOwn(designRecord, 'prototype')) {
+    if (type !== 'Frame') {
+      context.diagnostics.push(diagnostic('prototype.source.invalid', `${path}.design.prototype`, 'Only Frame nodes can define prototype links'));
+    } else {
+      const prototype = designRecord.prototype;
+      if (isRecord(prototype) && typeof value.id === 'string' && typeof prototype.targetNodeId === 'string') {
+        context.prototypeReferences.push({ sourceNodeId: value.id, targetNodeId: prototype.targetNodeId, path: `${path}.design.prototype.targetNodeId` });
+      }
+    }
+  }
   const props = componentProps[type].safeParse(value.props);
   if (!props.success) {
     context.diagnostics.push(...zodDiagnostics(props.error.issues, `${path}.props`, 'component.prop.invalid'));
@@ -132,6 +167,12 @@ function validateNode(value: unknown, path: string, context: NodeContext, depth:
   if (type === 'CallToAction') {
     const actionProps = componentProps.CallToAction.safeParse(value.props);
     if (actionProps.success) context.sectionReferences.push({ sectionId: actionProps.data.targetSectionId, path: `${path}.props.targetSectionId` });
+  }
+  if (type === 'Button') {
+    const buttonProps = componentProps.Button.safeParse(value.props);
+    if (buttonProps.success && buttonProps.data.targetSectionId) {
+      context.sectionReferences.push({ sectionId: buttonProps.data.targetSectionId, path: `${path}.props.targetSectionId` });
+    }
   }
 
   let tableColumns: Set<string> | undefined;
@@ -198,9 +239,19 @@ export function validatePageDsl(value: unknown, entityFields?: readonly EntityFi
   if (fields && !fields.success) return { ok: false, diagnostics: zodDiagnostics(fields.error.issues, 'entityFields', 'field.invalid') };
 
   const context: NodeContext = {
-    ids: new Set(), sectionIds: new Set(), sectionReferences: [], fields: fields?.success ? new Map(fields.data.map((field) => [field.id, field])) : undefined,
+    ids: new Set(), frameIds: new Set(), prototypeReferences: [], colorVariableIds: new Set(), sectionIds: new Set(), sectionReferences: [], fields: fields?.success ? new Map(fields.data.map((field) => [field.id, field])) : undefined,
     diagnostics: [], seen: new WeakSet()
   };
+  const colorVariables = page.data.theme?.colorVariables ?? [];
+  colorVariables.forEach((variable, index) => {
+    if (colorVariables.findIndex((item) => item.id === variable.id) !== index) {
+      context.diagnostics.push(diagnostic('variable.id.duplicate', `theme.colorVariables[${index}].id`, `Duplicate color variable ID: ${variable.id}`));
+    }
+    if (colorVariables.findIndex((item) => item.name === variable.name) !== index) {
+      context.diagnostics.push(diagnostic('variable.name.duplicate', `theme.colorVariables[${index}].name`, `Duplicate color variable name: ${variable.name}`));
+    }
+    context.colorVariableIds.add(variable.id);
+  });
   if (fields?.success) fields.data.forEach((field, index) => {
     if (fields.data.findIndex((item) => item.id === field.id) !== index) {
       context.diagnostics.push(diagnostic('field.id.duplicate', `entityFields[${index}].id`, 'Duplicate field ID'));
@@ -212,6 +263,13 @@ export function validatePageDsl(value: unknown, entityFields?: readonly EntityFi
   page.data.nodes.forEach((node, index) => validateNode(node, `nodes[${index}]`, context, 0));
   context.sectionReferences.forEach(({ sectionId, path }) => {
     if (!context.sectionIds.has(sectionId)) context.diagnostics.push(diagnostic('section.unresolved', path, `Unknown content section: ${sectionId}`));
+  });
+  context.prototypeReferences.forEach(({ sourceNodeId, targetNodeId, path }) => {
+    if (sourceNodeId === targetNodeId) {
+      context.diagnostics.push(diagnostic('prototype.target.self', path, 'A Frame cannot link to itself'));
+    } else if (!context.frameIds.has(targetNodeId)) {
+      context.diagnostics.push(diagnostic('prototype.target.invalid', path, 'Prototype target must reference an existing Frame'));
+    }
   });
   if (context.diagnostics.length > 0) return { ok: false, diagnostics: context.diagnostics };
   return { ok: true, dsl: value as PageDsl, diagnostics: [] };

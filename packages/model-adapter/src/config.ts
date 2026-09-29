@@ -21,6 +21,20 @@ export function loadModelConfig(env: ModelEnvironment = process.env): ModelConfi
   return { baseUrl, model, apiKey, timeoutMs: 30_000 };
 }
 
+export function loadVisionModelConfig(env: ModelEnvironment = process.env): ModelConfig {
+  const baseUrl = env.PULSEFLOW_VISION_API_URL?.trim() || env.PULSEFLOW_MODEL_BASE_URL?.trim();
+  const model = env.PULSEFLOW_VISION_MODEL_NAME?.trim() || env.PULSEFLOW_MODEL_NAME?.trim();
+  const apiKey = env.PULSEFLOW_VISION_API_KEY?.trim() || env.PULSEFLOW_MODEL_API_KEY?.trim();
+  const timeoutMs = Number(env.PULSEFLOW_VISION_TIMEOUT_MS?.trim() || 90_000);
+  if (!baseUrl) throw new ModelAdapterError('config', 'PULSEFLOW_VISION_API_URL or PULSEFLOW_MODEL_BASE_URL is required');
+  if (!model) throw new ModelAdapterError('config', 'PULSEFLOW_VISION_MODEL_NAME or PULSEFLOW_MODEL_NAME is required');
+  if (!apiKey) throw new ModelAdapterError('config', 'PULSEFLOW_VISION_API_KEY or PULSEFLOW_MODEL_API_KEY is required');
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1_000 || timeoutMs > 180_000) {
+    throw new ModelAdapterError('config', 'PULSEFLOW_VISION_TIMEOUT_MS must be between 1000 and 180000');
+  }
+  return { baseUrl, model, apiKey, timeoutMs };
+}
+
 export function completionEndpoint(config: ModelConfig): string {
   if (!config.baseUrl?.trim()) throw new ModelAdapterError('config', 'PULSEFLOW_MODEL_BASE_URL is required');
   if (!config.model?.trim()) throw new ModelAdapterError('config', 'PULSEFLOW_MODEL_NAME is required');

@@ -9,6 +9,12 @@ export interface PaletteItem {
 
 defineProps<{ items: readonly PaletteItem[] }>();
 const emit = defineEmits<{ add: [type: ComponentType] }>();
+
+function startDrag(type: ComponentType, event: DragEvent): void {
+  if (!event.dataTransfer) return;
+  event.dataTransfer.setData('application/x-pulseflow-component', type);
+  event.dataTransfer.effectAllowed = 'copy';
+}
 </script>
 
 <template>
@@ -22,8 +28,10 @@ const emit = defineEmits<{ add: [type: ComponentType] }>();
         :key="item.type"
         class="palette-item"
         type="button"
+        draggable="true"
         :data-testid="`palette-${item.type}`"
         @click="emit('add', item.type)"
+        @dragstart="startDrag(item.type, $event)"
       >
         <span class="palette-glyph">+</span>
         <span><strong>{{ item.label }}</strong><small>{{ item.type }} · {{ item.hint }}</small></span>

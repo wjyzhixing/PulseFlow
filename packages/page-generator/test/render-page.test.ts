@@ -5,7 +5,7 @@ import { defineComponent } from 'vue';
 import { imageAssetNode, validPage } from '../../ui-dsl/test/fixtures.js';
 import { bodyCellLabel, displayValue, fieldValue, invokeEvent, matchesCondition, renderPage, tableCellValue, tableRows } from '../src/render-page.js';
 
-const host = defineComponent({ props: { page: { type: Object, required: true }, data: { type: Object, required: true }, handlers: { type: Object, required: true }, assetUrls: { type: Object, default: () => new Map() } }, setup(props) { return () => renderPage(props.page, props.data, props.handlers, props.assetUrls); } });
+const host = defineComponent({ props: { page: { type: Object, required: true }, data: { type: Object, required: true }, handlers: { type: Object, required: true }, assetUrls: { type: Object, default: () => new Map() }, editorOptions: { type: Object, default: undefined } }, setup(props) { return () => renderPage(props.page, props.data, props.handlers, props.assetUrls, props.editorOptions); } });
 
 beforeAll(() => {
   const getStyle = window.getComputedStyle.bind(window);
@@ -14,6 +14,17 @@ beforeAll(() => {
 });
 
 describe('renderPage', () => {
+  it('renders rectangle, ellipse, and line shapes with their visual geometry', () => {
+    const page = { ...validPage, nodes: (['rectangle', 'ellipse', 'line'] as const).map((shape, index) => ({
+      id: `shape-${index}`, type: 'Shape' as const, props: { shape }, children: [], slots: []
+    })) };
+    const wrapper = mount(host, { props: { page, data: {}, handlers: {} } });
+
+    expect(wrapper.get('.pf-shape--rectangle').element.style.borderRadius).toBe('');
+    expect(wrapper.get('.pf-shape--ellipse').element.style.borderRadius).toBe('50%');
+    expect(wrapper.get('.pf-shape--line').element.style.height).toBe('1px');
+  });
+
   it('rejects an unknown component before rendering', () => {
     const page = { ...validPage, nodes: [{ ...validPage.nodes[0], type: 'RemoteWidget' }, ...validPage.nodes.slice(1)] };
     expect(() => renderPage(page, {}, {})).toThrow('component.unsupported');
@@ -25,6 +36,102 @@ describe('renderPage', () => {
     expect(wrapper.text()).toContain('Live');
     expect(wrapper.text()).toContain('Active');
     expect(wrapper.text()).toContain('Summary');
+  });
+
+  it('renders Figma design objects and applies validated position, size, fill and typography tokens', () => {
+    const page = { ...validPage, nodes: [{
+      id: 'hero-frame', type: 'Frame' as const, props: { name: '首屏', direction: 'column', gap: 12, padding: 24 },
+      design: { position: { mode: 'absolute' as const, x: 80, y: 40 }, size: { width: 720, height: 'hug' as const }, fill: '#F0F5FF', cornerRadius: 16 },
+      children: [{ id: 'hero-title', type: 'Text' as const, props: { text: '机器人科技' }, design: {
+        size: { width: 'fill' as const, height: 'hug' as const },
+        typography: { fontFamily: 'sans' as const, fontSize: 42, fontWeight: 700 as const, lineHeight: 1.2, letterSpacing: -0.5, textAlign: 'left' as const, color: '#152347' }
+      }, children: [], slots: [] }], slots: []
+    }] };
+    const wrapper = mount(host, { props: { page, data: {}, handlers: {} } });
+
+    expect(wrapper.get('[data-pf-node-id="hero-frame"]').attributes('style')).toContain('left: 80px');
+    expect(wrapper.get('.pf-frame').element.style.gap).toBe('12px');
+    expect(wrapper.get('.pf-frame').element.style.backgroundColor).toBe('rgb(240, 245, 255)');
+    expect(wrapper.get('[data-pf-node-id="hero-title"]').element.style.width).toBe('100%');
+    expect(wrapper.get('.pf-text').element.style.fontSize).toBe('42px');
+    expect(wrapper.get('.pf-text').element.style.color).toBe('rgb(21, 35, 71)');
+  });
+
+  it('renders a fixed root Frame as the page artboard without responsive page chrome', () => {
+    const page = { ...validPage, nodes: [{
+      id: 'artboard', type: 'Frame' as const,
+      props: { name: 'Imported', direction: 'column' as const, gap: 0, padding: 0 },
+      design: { position: { mode: 'absolute' as const, x: 0, y: 0 }, size: { width: 1440, height: 900 } },
+      children: [], slots: []
+    }] };
+    const wrapper = mount(host, { props: { page, data: {}, handlers: {} } });
+    const pageElement = wrapper.get('.pulseflow-page').element as HTMLElement;
+
+    expect(pageElement.style.width).toBe('1440px');
+    expect(pageElement.style.height).toBe('900px');
+    expect(pageElement.style.maxWidth).toBe('none');
+    expect(pageElement.style.minHeight).toBe('900px');
+    expect(pageElement.style.padding).toBe('0px');
+  });
+
+  it('keeps Ant Design grid columns at their DSL span inside editor selection wrappers', () => {
+    const page = { ...validPage, nodes: [{
+      id: 'grid', type: 'Row' as const, props: { gutter: 16 }, slots: [], children: [
+        { id: 'grid-col', type: 'Col' as const, props: { span: 8 }, slots: [], children: [
+          { id: 'grid-card', type: 'Card' as const, props: { title: '能力' }, slots: [], children: [] }
+        ] }
+      ]
+    }] };
+    const wrapper = mount(host, { props: { page, data: {}, handlers: {}, editorOptions: { onSelectNode: vi.fn() } } });
+    const editorColumn = wrapper.get('[data-pf-node-id="grid-col"]');
+    const antColumn = editorColumn.get('.ant-col');
+
+    expect(editorColumn.element.style.width).toBe(`${8 / 24 * 100}%`);
+    expect(editorColumn.element.style.flex).toBe(`0 0 ${8 / 24 * 100}%`);
+    expect(antColumn.element.style.width).toBe('100%');
+    expect(antColumn.element.style.flex).toBe('0 0 100%');
+  });
+
+  it('selects the clicked DSL node in editor mode without invoking page actions', async () => {
+    const onSelectNode = vi.fn();
+    const refresh = vi.fn();
+    const wrapper = mount(host, { props: { page: validPage, data: {}, handlers: { refresh }, editorOptions: { onSelectNode } } });
+    const button = wrapper.find('[data-pf-node-id="button"]');
+    expect(button.exists()).toBe(true);
+    expect(wrapper.find('.pf-editor-node[data-pf-node-id="header"] .pulseflow-page-header').exists()).toBe(true);
+    expect(wrapper.find('[data-pf-node-id="header-tag"]').classes()).toContain('pf-editor-node');
+    await button.trigger('click');
+    expect(onSelectNode).toHaveBeenCalledExactlyOnceWith('button');
+    expect(refresh).not.toHaveBeenCalled();
+  });
+
+  it('preserves additive keyboard modifiers when routing editor selection', async () => {
+    const onSelectNode = vi.fn();
+    const wrapper = mount(host, { props: { page: validPage, data: {}, handlers: {}, editorOptions: { onSelectNode } } });
+
+    await wrapper.get('[data-pf-node-id="button"]').trigger('click', { shiftKey: true });
+
+    expect(onSelectNode).toHaveBeenCalledExactlyOnceWith('button', true);
+  });
+
+  it('renders group resize controls when multiple DSL nodes are selected', () => {
+    const wrapper = mount(host, { props: {
+      page: validPage, data: {}, handlers: {},
+      editorOptions: { selectedNodeIds: ['button', 'card'], selectionBounds: { x: 8, y: 16, width: 240, height: 120 }, onSelectNode: vi.fn() }
+    } });
+
+    expect(wrapper.get('[data-pf-group-transform]').attributes('style')).toContain('left: 8px');
+    expect(wrapper.findAll('[data-pf-group-resize-handle]')).toHaveLength(8);
+  });
+
+  it('reserves pointer dragging for the selected editor layer', () => {
+    const wrapper = mount(host, { props: {
+      page: validPage, data: {}, handlers: {},
+      editorOptions: { selectedNodeId: 'button', onSelectNode: vi.fn() }
+    } });
+
+    expect(wrapper.get('[data-pf-node-id="button"]').attributes('draggable')).toBe('false');
+    expect(wrapper.get('[data-pf-node-id="card"]').attributes('draggable')).toBe('true');
   });
 
   it('renders bundled safe SVG assets and background overlays from allowlisted asset IDs', () => {
@@ -93,6 +200,16 @@ describe('renderPage', () => {
     expect(wrapper.find('[data-pulseflow-preview-styles]').text()).toContain('.pulseflow-page--website');
   });
 
+  it('renders validated page theme tokens on the same page root and shared theme stylesheet', () => {
+    const page = { ...validPage, theme: { colorScheme: 'teal' as const, cornerStyle: 'soft' as const } };
+    const wrapper = mount(host, { props: { page, data: {}, handlers: {} } });
+    const root = wrapper.get('.pulseflow-page');
+    expect(root.attributes('data-pf-color-scheme')).toBe('teal');
+    expect(root.attributes('data-pf-corner-style')).toBe('soft');
+    expect(wrapper.get('[data-pulseflow-preview-styles]').text()).toContain('.pulseflow-page[data-pf-color-scheme="teal"]');
+    expect(wrapper.get('[data-pulseflow-preview-styles]').text()).toContain('--pf-radius-lg:18px');
+  });
+
   it('renders valid button labels as escaped text and invokes only supplied mock handlers', async () => {
     const handler = vi.fn();
     const page = { ...validPage, nodes: validPage.nodes.map((node) => node.id === 'card'
@@ -145,5 +262,99 @@ describe('renderPage', () => {
     expect(handler).not.toHaveBeenCalled();
     invokeEvent({ refresh: handler }, 'refresh');
     expect(handler).toHaveBeenCalledOnce();
+  });
+
+  it('commits inline text on Enter, preserves Shift+Enter, and restores the source on Escape', async () => {
+    const page = { ...validPage, nodes: [{ id: 'editable', type: 'Text' as const, props: { text: '原始文字' }, children: [], slots: [] }] };
+    const onStartTextEdit = vi.fn();
+    const onCommitTextEdit = vi.fn();
+    const onCancelTextEdit = vi.fn();
+    const wrapper = mount(host, { props: { page, data: {}, handlers: {}, editorOptions: {
+      editingTextNodeId: 'editable', onStartTextEdit, onCommitTextEdit, onCancelTextEdit
+    } } });
+    const text = wrapper.get('.pf-text');
+
+    await text.trigger('dblclick');
+    expect(onStartTextEdit).toHaveBeenCalledWith('editable');
+    (text.element as HTMLElement).textContent = '已修改';
+    await text.trigger('keydown', { key: 'Enter', shiftKey: true });
+    expect(onCommitTextEdit).not.toHaveBeenCalled();
+    await text.trigger('keydown', { key: 'Escape' });
+
+    expect((text.element as HTMLElement).textContent).toBe('原始文字');
+    expect(onCancelTextEdit).toHaveBeenCalledExactlyOnceWith('editable');
+
+    (text.element as HTMLElement).textContent = '最终标题';
+    await text.trigger('keydown', { key: 'Enter' });
+    expect(onCommitTextEdit).toHaveBeenCalledExactlyOnceWith('editable', '最终标题');
+  });
+
+  it('pastes plain text into the selected range or appends it when there is no selection', async () => {
+    const page = { ...validPage, nodes: [{ id: 'editable', type: 'Text' as const, props: { text: 'hello world' }, children: [], slots: [] }] };
+    const wrapper = mount(host, { attachTo: document.body, props: { page, data: {}, handlers: {}, editorOptions: { editingTextNodeId: 'editable', onStartTextEdit: vi.fn() } } });
+    const text = wrapper.get('.pf-text');
+    const element = text.element as HTMLElement;
+    const textNode = element.firstChild!;
+    const range = document.createRange();
+    range.setStart(textNode, 6);
+    range.setEnd(textNode, 11);
+    const selection = document.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    const paste = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(paste, 'clipboardData', { value: { getData: (type: string) => type === 'text/plain' ? 'earth' : '<img src=x onerror=alert(1)>' } });
+    element.dispatchEvent(paste);
+
+    expect(paste.defaultPrevented).toBe(true);
+    expect(element.textContent).toBe('hello earth');
+
+    selection.removeAllRanges();
+    const append = new Event('paste', { bubbles: true, cancelable: true });
+    Object.defineProperty(append, 'clipboardData', { value: { getData: () => '!' } });
+    element.dispatchEvent(append);
+    expect(element.textContent).toBe('hello earth!');
+    wrapper.unmount();
+  });
+
+  it('drops plain text at a valid caret, falls back to a safe range, and appends without coordinates', async () => {
+    const page = { ...validPage, nodes: [{ id: 'editable', type: 'Text' as const, props: { text: 'abcdef' }, children: [], slots: [] }] };
+    const wrapper = mount(host, { attachTo: document.body, props: { page, data: {}, handlers: {}, editorOptions: { editingTextNodeId: 'editable', onStartTextEdit: vi.fn() } } });
+    const element = wrapper.get('.pf-text').element as HTMLElement;
+    const originalCaretPosition = Object.getOwnPropertyDescriptor(document, 'caretPositionFromPoint');
+    const originalCaretRange = Object.getOwnPropertyDescriptor(document, 'caretRangeFromPoint');
+    const makeDrop = (withCoordinates: boolean) => {
+      const event = new Event('drop', { bubbles: true, cancelable: true });
+      if (withCoordinates) Object.defineProperties(event, { clientX: { value: 10 }, clientY: { value: 20 } });
+      Object.defineProperty(event, 'dataTransfer', { value: { getData: (type: string) => type === 'text/plain' ? 'X' : '<svg>' } });
+      return event;
+    };
+    try {
+      Object.defineProperty(document, 'caretPositionFromPoint', { configurable: true, value: () => ({ offsetNode: element.firstChild, offset: 3 }) });
+      const directDrop = makeDrop(true);
+      element.dispatchEvent(directDrop);
+      expect(directDrop.defaultPrevented).toBe(true);
+      expect(element.textContent).toBe('abcXdef');
+
+      Object.defineProperty(document, 'caretPositionFromPoint', { configurable: true, value: () => ({ offsetNode: document.body, offset: 0 }) });
+      Object.defineProperty(document, 'caretRangeFromPoint', { configurable: true, value: () => {
+        const range = document.createRange();
+        range.setStart(element.firstChild!, 1);
+        range.collapse(true);
+        return range;
+      } });
+      element.dispatchEvent(makeDrop(true));
+      expect(element.textContent).toBe('aXbcXdef');
+
+      const missingPointDrop = makeDrop(false);
+      element.dispatchEvent(missingPointDrop);
+      expect(missingPointDrop.defaultPrevented).toBe(true);
+      expect(element.textContent).toBe('aXbcXdefX');
+    } finally {
+      if (originalCaretPosition) Object.defineProperty(document, 'caretPositionFromPoint', originalCaretPosition);
+      else Reflect.deleteProperty(document, 'caretPositionFromPoint');
+      if (originalCaretRange) Object.defineProperty(document, 'caretRangeFromPoint', originalCaretRange);
+      else Reflect.deleteProperty(document, 'caretRangeFromPoint');
+      wrapper.unmount();
+    }
   });
 });

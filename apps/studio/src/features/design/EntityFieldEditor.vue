@@ -31,7 +31,7 @@ function updateEnum(field: DesignEntityField, event: Event): void {
 }
 
 function updateFormat(field: DesignEntityField, event: Event): void {
-  const format = (event.target as HTMLSelectElement).value as 'phone' | 'creditCode' | '';
+  const format = (event.target as HTMLSelectElement).value as 'phone' | 'creditCode' | 'email' | '';
   const otherRules = field.rules.filter((rule) => rule.kind !== 'format');
   emit('update', field.id, { rules: format ? [...otherRules, { kind: 'format', format }] : otherRules });
 }
@@ -53,7 +53,7 @@ function updateFormat(field: DesignEntityField, event: Event): void {
       </div>
       <label class="required-control"><input :data-testid="`field-required-${field.id}`" type="checkbox" :checked="field.rules.some((rule) => rule.kind === 'required')" @change="updateRequired(field, $event)"><span>必填</span></label>
       <label class="field-control"><span>枚举选项（逗号分隔）</span><input :data-testid="`field-enum-${field.id}`" :value="enumValues(field)" placeholder="例如：待处理, 已完成" @change="updateEnum(field, $event)"></label>
-      <label class="field-control"><span>格式校验</span><select :data-testid="`field-format-${field.id}`" :value="selectedFormat(field)" @change="updateFormat(field, $event)"><option value="">无</option><option value="phone">手机号</option><option value="creditCode">统一社会信用代码</option></select></label>
+      <label class="field-control"><span>格式校验</span><select :data-testid="`field-format-${field.id}`" :value="selectedFormat(field)" @change="updateFormat(field, $event)"><option value="">无</option><option value="phone">手机号</option><option value="creditCode">统一社会信用代码</option><option value="email">邮箱格式</option></select></label>
       <button type="button" class="remove-field" :data-testid="`remove-field-${field.id}`" @click="emit('remove', field.id)">移除字段</button>
     </article>
     <p v-if="feedback" class="field-feedback" :class="{ failed }" data-testid="field-feedback" :role="failed ? 'alert' : 'status'">{{ feedback }}</p>

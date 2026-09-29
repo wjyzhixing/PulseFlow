@@ -45,6 +45,35 @@ const draft = { id: 'draft-assets', pageId: validCandidate.pageDsl.pageId, statu
 const headers = { authorization: 'Bearer workspace-secret' };
 
 describe('image assets API', () => {
+  it('validates upload scopes, normalizes local images, and rejects stale drafts', async () => {
+    const directory = await mkdtemp(join(tmpdir(), 'pulseflow-assets-upload-'));
+    const app = buildApp({ workspaceToken: 'workspace-secret', dbPath: join(directory, 'db.sqlite'), assetDir: join(directory, 'assets') });
+    const imageDataUrl = `data:image/png;base64,${Buffer.from(validPng()).toString('base64')}`;
+    try {
+      await app.inject({ method: 'POST', url: '/api/drafts', headers, payload: draft });
+      const invalid = await app.inject({ method: 'POST', url: '/api/assets/upload', headers, payload: { pageId: 'bad page', imageDataUrl } });
+      const missingDraft = await app.inject({ method: 'POST', url: '/api/assets/upload', headers, payload: {
+        pageId: draft.pageId, draftId: 'missing-draft', expectedRevision: '1', imageDataUrl
+      } });
+      const invalidRevision = await app.inject({ method: 'POST', url: '/api/assets/upload', headers, payload: {
+        pageId: draft.pageId, draftId: draft.id, expectedRevision: 'stale', imageDataUrl
+      } });
+      const invalidImage = await app.inject({ method: 'POST', url: '/api/assets/upload', headers, payload: {
+        pageId: draft.pageId, imageDataUrl: 'data:text/plain;base64,SGVsbG8='
+      } });
+      expect(invalid.statusCode).toBe(400);
+      expect(missingDraft.statusCode).toBe(404);
+      expect(invalidRevision.statusCode).toBe(409);
+      expect(invalidImage.statusCode).toBe(400);
+
+      const uploaded = await app.inject({ method: 'POST', url: '/api/assets/upload', headers, payload: {
+        pageId: draft.pageId, imageDataUrl
+      } });
+      expect(uploaded.statusCode, uploaded.body).toBe(201);
+      expect(uploaded.json().data).toMatchObject({ pageId: draft.pageId, mimeType: 'image/png', width: 1, height: 1 });
+    } finally { await app.close(); await rm(directory, { recursive: true, force: true }); }
+  });
+
   it('generates one PNG for an authenticated page target and returns its bytes', async () => {
     const directory = await mkdtemp(join(tmpdir(), 'pulseflow-assets-'));
     const bytes = validPng();

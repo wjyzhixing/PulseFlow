@@ -38,6 +38,7 @@ test('imports a synthetic requirement, edits and publishes a page, then safely p
         : node)
     };
     await page.getByTestId('enter-design').click();
+    await page.locator('[data-dsl-toggle]').click();
     await expect(page.getByTestId('dsl-monaco')).toBeVisible();
     await page.evaluate((source) => {
       const editor = window.__pulseflowMonacoEditor;
@@ -46,11 +47,14 @@ test('imports a synthetic requirement, edits and publishes a page, then safely p
     }, JSON.stringify(editedDsl, null, 2));
     await expect(page.getByText('VALID', { exact: true })).toBeVisible();
     await expect(page.getByRole('region', { name: '页面预览' }).getByRole('heading', { name: 'Monaco edited demo page' })).toBeVisible();
-    await expect(page.getByTestId('preview-status')).toContainText('预览就绪');
-    await page.getByTestId('move-down-header').click();
-    const rootNodes = page.locator('.node-stack > [data-testid^="canvas-node-"]');
-    await expect(rootNodes.nth(0)).toHaveAttribute('data-testid', 'canvas-node-table');
-    await expect(rootNodes.nth(2)).toHaveAttribute('data-testid', 'canvas-node-header');
+    await expect(page.getByTestId('preview-status')).toContainText('点击页面对象以选择');
+    await page.getByTestId('resource-tab-layers').click();
+    await page.getByTestId('canvas-node-header').dragTo(page.getByTestId('canvas-node-table'));
+    const rootNodes = page.locator('.pulseflow-page > [data-pf-node-id]');
+    await expect(rootNodes.nth(0)).toHaveAttribute('data-pf-node-id', 'metric-row');
+    await expect(rootNodes.nth(1)).toHaveAttribute('data-pf-node-id', 'header');
+    await expect(rootNodes.nth(2)).toHaveAttribute('data-pf-node-id', 'table');
+    await page.getByRole('button', { name: '发布' }).click();
     await page.getByTestId('publish').getByTestId('publish-action').click();
     await expect(page.getByTestId('publish-status')).toHaveText('已发布', { timeout: 420_000 });
     for (const label of ['DSL', '预览编译', '类型检查', '干净模板构建']) {
@@ -96,6 +100,7 @@ test('starts D2C from a blank canvas and publishes generated Vue code with desig
 
   await page.getByTestId('start-blank-draft').click();
   await expect(page.locator('.design-canvas')).toContainText('空白画布');
+  await page.locator('[data-inspector-tab="fields"]').click();
   await expect(page.getByTestId('entity-field-editor')).toBeVisible();
   await page.getByTestId('add-entity-field').click();
   await page.getByTestId('field-label-field-1').fill('客户名称');
@@ -103,13 +108,14 @@ test('starts D2C from a blank canvas and publishes generated Vue code with desig
   await page.getByTestId('field-required-field-1').check();
 
   await page.getByTestId('palette-Form').click();
-  await page.getByTestId('canvas-node-form-1').click();
+  await page.locator('[data-pf-node-id="form-1"]').click();
   await page.getByTestId('palette-FormItem').click();
   await page.getByTestId('canvas-node-form-item-1').click();
   await page.getByTestId('palette-Input').click();
   await expect(page.getByRole('region', { name: '页面预览' })).toContainText('客户名称');
   await expect(page.getByTestId('preview-status')).toContainText('预览就绪');
 
+  await page.getByRole('button', { name: '发布' }).click();
   await page.getByTestId('publish').getByTestId('publish-action').click();
   await expect(page.getByTestId('publish-status')).toHaveText('已发布', { timeout: 420_000 });
   for (const label of ['DSL', '预览编译', '类型检查', '干净模板构建']) {

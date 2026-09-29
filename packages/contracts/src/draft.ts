@@ -13,6 +13,7 @@ export interface DraftRefinementInput {
   entityFields: EntityField[];
   pageDsl: PageDsl;
   semanticQuestions: SemanticQuestion[];
+  targetNodeIds?: string[];
 }
 
 export interface Draft {

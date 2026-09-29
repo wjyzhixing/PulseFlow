@@ -62,6 +62,16 @@ describe('generateDraft', () => {
     })).resolves.toMatchObject({ pageDsl: { pageKind: 'admin', pageId: validPage.pageId } });
   });
 
+  it('accepts an email format rule generated for a website contact form', async () => {
+    const withEmail = {
+      ...draft,
+      entityFields: [{ id: 'email', key: 'email', label: '邮箱', type: 'string', rules: [{ kind: 'format', format: 'email' }] }]
+    };
+    await expect(generateDraft(input, {
+      ...baseConfig, fetchImpl: async () => completion(JSON.stringify(withEmail))
+    })).resolves.toMatchObject({ entityFields: [{ rules: [{ kind: 'format', format: 'email' }] }] });
+  });
+
   it('rejects a missing page type when auto-detection is requested', async () => {
     const missingKind = { ...draft, pageDsl: { ...draft.pageDsl, pageKind: undefined } };
     await expect(generateDraft(input, { ...baseConfig, fetchImpl: async () => completion(JSON.stringify(missingKind)) }))
@@ -229,6 +239,31 @@ describe('refineDraft', () => {
       ...baseConfig, fetchImpl: async () => completion(JSON.stringify(imageResult))
     });
     expect(result).toMatchObject({ intent: 'page_edit_and_image', imagePlan: { targetNodeId: 'hero', placement: 'background' } });
+  });
+
+  it('normalizes common image-plan JSON variations from JSON-mode models', async () => {
+    const imageResult = {
+      ...draft,
+      intent: 'image',
+      imagePlan: { prompt: '给机器人首页生成蓝色科技主视觉', targetNodeId: null, quality: 'high' }
+    };
+    const result = await refineDraft({
+      instruction: '生成机器人首页主视觉', entityFields: draft.entityFields,
+      pageDsl: draft.pageDsl, semanticQuestions: draft.semanticQuestions
+    }, { ...baseConfig, fetchImpl: async () => completion(JSON.stringify(imageResult)) });
+
+    expect(result.imagePlan).toEqual({ prompt: '给机器人首页生成蓝色科技主视觉', placement: 'inline' });
+  });
+
+  it('treats a null image plan as omitted on page-only refinements', async () => {
+    const pageOnlyResult = { ...draft, intent: 'page_edit', imagePlan: null };
+    const result = await refineDraft({
+      instruction: '把页面标题改得更清楚', entityFields: draft.entityFields,
+      pageDsl: draft.pageDsl, semanticQuestions: draft.semanticQuestions
+    }, { ...baseConfig, fetchImpl: async () => completion(JSON.stringify(pageOnlyResult)) });
+
+    expect(result.intent).toBe('page_edit');
+    expect(result.imagePlan).toBeUndefined();
   });
 
   it('requires image plans for clear image intent and rejects invalid placement targets', async () => {

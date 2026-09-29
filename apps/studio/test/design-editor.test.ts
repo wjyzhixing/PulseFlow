@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { flushPromises, mount } from '@vue/test-utils';
+import { flushPromises, mount, type VueWrapper } from '@vue/test-utils';
 import type { T2uiResult } from '@pulseflow/contracts';
 import App from '../src/App.vue';
 import { createStudioRouter } from '../src/router';
@@ -60,12 +60,30 @@ async function setup(path = '/design', draftResult: T2uiResult | 'blank' = resul
   return { wrapper, router };
 }
 
+async function addComponent(wrapper: VueWrapper, type: string): Promise<void> {
+  const toolsRail = wrapper.get('[aria-label="工具"]');
+  if (toolsRail.attributes('aria-pressed') !== 'true') await toolsRail.trigger('click');
+  await wrapper.get(`[data-testid="palette-${type}"]`).trigger('click');
+  const fileRail = wrapper.get('[aria-label="文件"]');
+  if (fileRail.attributes('aria-pressed') !== 'true') await fileRail.trigger('click');
+}
+
+async function publishDesign(wrapper: VueWrapper): Promise<void> {
+  await wrapper.get('.editor-publish-action').trigger('click');
+  await wrapper.get('[data-testid="publish-action"]').trigger('click');
+}
+
+async function openDataInspector(wrapper: VueWrapper): Promise<void> {
+  await wrapper.get('[data-inspector-tab="fields"]').trigger('click');
+}
+
 beforeEach(() => { vi.useFakeTimers(); clearToken(); clearDraft(); monacoHarness.create.mockClear(); monacoHarness.setModelMarkers.mockClear(); });
 afterEach(() => { vi.useRealTimers(); clearToken(); clearDraft(); });
 
 describe('design editor', () => {
   it('creates entity fields on a blank design and binds components to them', async () => {
     const { wrapper } = await setup('/design', 'blank');
+    await openDataInspector(wrapper);
     expect(wrapper.get('[data-testid="entity-field-editor"]').text()).toContain('暂无实体字段');
 
     await wrapper.get('[data-testid="add-entity-field"]').trigger('click');
@@ -73,8 +91,8 @@ describe('design editor', () => {
     await wrapper.get('[data-testid="field-required-field-1"]').setValue(true);
     await wrapper.get('[data-testid="field-enum-field-1"]').setValue('企业,个人');
     await wrapper.get('[data-testid="field-format-field-1"]').setValue('creditCode');
-    await wrapper.get('[data-testid="palette-FormItem"]').trigger('click');
-    await wrapper.get('[data-testid="palette-Input"]').trigger('click');
+    await addComponent(wrapper, 'FormItem');
+    await addComponent(wrapper, 'Input');
 
     const savedFields = JSON.parse(getDraftSession()!.fieldsText) as Array<{ id: string; label: string; rules: unknown[] }>;
     expect(savedFields).toMatchObject([{ id: 'field-1', label: '客户名称', rules: expect.arrayContaining([
@@ -82,38 +100,55 @@ describe('design editor', () => {
     ]) }]);
     const savedDsl = JSON.parse(getDraftSession()!.dslText) as { nodes: Array<{ props: { fieldId: string } }> };
     expect(savedDsl.nodes[0]?.props.fieldId).toBe('field-1');
-    expect(wrapper.get('[data-testid="preview-status"]').text()).toContain('预览就绪');
+    expect(wrapper.find('.design-canvas').exists()).toBe(true);
+    expect(wrapper.find('[data-pf-node-id]').exists()).toBe(true);
+    expect(wrapper.find('[data-testid="preview-status"]').exists()).toBe(false);
   });
 
   it('shows rejected field edits and leaves the valid entity field unchanged', async () => {
     const { wrapper } = await setup('/design', 'blank');
+    await openDataInspector(wrapper);
     await wrapper.get('[data-testid="add-entity-field"]').trigger('click');
     await wrapper.get('[data-testid="field-key-field-1"]').setValue('bad key');
     expect(wrapper.get('[data-testid="field-feedback"]').text()).toContain('未保存');
     expect(JSON.parse(getDraftSession()!.fieldsText)).toMatchObject([{ id: 'field-1', key: 'field_1' }]);
   });
 
+  it('allows an email validation rule on an entity field', async () => {
+    const { wrapper } = await setup('/design', 'blank');
+    await openDataInspector(wrapper);
+    await wrapper.get('[data-testid="add-entity-field"]').trigger('click');
+    await wrapper.get('[data-testid="field-format-field-1"]').setValue('email');
+    expect(JSON.parse(getDraftSession()!.fieldsText)).toMatchObject([
+      { id: 'field-1', rules: [{ kind: 'format', format: 'email' }] }
+    ]);
+  });
+
   it('publishes the current design and starts a new draft after a published page changes', async () => {
     const { wrapper } = await setup();
-    await wrapper.get('[data-testid="palette-Button"]').trigger('click');
+    await addComponent(wrapper, 'Button');
     const originalId = getDraftSession()!.id;
     const gates = (['dsl', 'preview-compile', 'template-build'] as const)
       .map((id) => ({ id, status: 'passed', blocking: true, diagnostics: [] }));
     const fetchMock = vi.fn().mockImplementation(async (path: string, options: RequestInit) => {
       if (path === '/api/drafts') return new Response(JSON.stringify({ ok: true, data: JSON.parse(String(options.body)) }), { status: 201 });
-      return new Response(JSON.stringify({ ok: true, data: { pageId: 'orders', versionId: 'orders-v1', createdAt: '2026-09-25T00:00:00.000Z', manifest: {}, files: [], gates } }), { status: 201 });
+      if (path === '/api/studio-files') return new Response(JSON.stringify({ ok: true, data: { ...JSON.parse(String(options.body)), revision: 1 } }), { status: 201 });
+      if (path.startsWith('/api/studio-files/')) return new Response(JSON.stringify({ ok: true, data: { ...JSON.parse(String(options.body)), revision: 2 } }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, data: { fileId: 'file-test', title: '订单工作台', publications: [
+        { pageId: 'orders', versionId: 'orders-v1', createdAt: '2026-09-25T00:00:00.000Z', manifest: {}, files: [], gates }
+      ] } }), { status: 201 });
     });
     vi.stubGlobal('fetch', fetchMock);
     try {
-      await wrapper.get('[data-testid="publish-action"]').trigger('click');
+      await publishDesign(wrapper);
       await flushPromises();
-      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock).toHaveBeenCalledTimes(3);
       const saved = JSON.parse(String(fetchMock.mock.calls[0]?.[1]?.body));
       expect(saved.status).toBe('confirmed');
       expect(saved.pageDsl.nodes).toContainEqual(expect.objectContaining({ type: 'Button' }));
       expect(wrapper.get('[data-testid="publish-status"]').text()).toContain('已发布');
       expect(wrapper.text()).toContain('orders-v1');
-      await wrapper.get('[data-testid="palette-Tag"]').trigger('click');
+      await addComponent(wrapper, 'Tag');
       expect(getDraftSession()?.id).not.toBe(originalId);
       expect(getDraftSession()?.saved).toBe(false);
     } finally { vi.unstubAllGlobals(); }
@@ -125,13 +160,18 @@ describe('design editor', () => {
       .map((id) => ({ id, status: 'passed', blocking: true, diagnostics: [] }));
     const fetchMock = vi.fn().mockImplementation(async (path: string, options: RequestInit) => {
       if (path === '/api/drafts') return new Response(JSON.stringify({ ok: true, data: JSON.parse(String(options.body)) }), { status: 201 });
-      return new Response(JSON.stringify({ ok: true, data: { pageId: 'orders', versionId: 'orders-v1', createdAt: '2026-09-25T00:00:00.000Z', manifest: {}, files: [], gates } }), { status: 201 });
+      if (path === '/api/studio-files') return new Response(JSON.stringify({ ok: true, data: { ...JSON.parse(String(options.body)), revision: 1 } }), { status: 201 });
+      if (path.startsWith('/api/studio-files/')) return new Response(JSON.stringify({ ok: true, data: { ...JSON.parse(String(options.body)), revision: 2 } }), { status: 200 });
+      return new Response(JSON.stringify({ ok: true, data: { fileId: 'file-test', title: '订单工作台', publications: [
+        { pageId: 'orders', versionId: 'orders-v1', createdAt: '2026-09-25T00:00:00.000Z', manifest: {}, files: [], gates }
+      ] } }), { status: 201 });
     });
     vi.stubGlobal('fetch', fetchMock);
     try {
-      await wrapper.get('[data-testid="publish-action"]').trigger('click');
+      await publishDesign(wrapper);
       await flushPromises();
       expect(wrapper.get('[data-testid="publish-status"]').text()).toBe('已发布');
+      await openDataInspector(wrapper);
       await wrapper.get('[data-testid="field-label-company"]').setValue('客户名称');
       expect(getDraftSession()?.id).not.toBe(originalId);
       expect(JSON.parse(getDraftSession()!.fieldsText)).toMatchObject([{ id: 'company', label: '客户名称' }]);
@@ -146,33 +186,38 @@ describe('design editor', () => {
     const pendingPublication = new Promise<Response>((resolve) => { completePublication = resolve; });
     const fetchMock = vi.fn().mockImplementation(async (path: string, options: RequestInit) => {
       if (path === '/api/drafts') return new Response(JSON.stringify({ ok: true, data: JSON.parse(String(options.body)) }), { status: 201 });
+      if (path === '/api/studio-files') return new Response(JSON.stringify({ ok: true, data: { ...JSON.parse(String(options.body)), revision: 1 } }), { status: 201 });
       return pendingPublication;
     });
     vi.stubGlobal('fetch', fetchMock);
     try {
-      await wrapper.get('[data-testid="publish-action"]').trigger('click');
+      await publishDesign(wrapper);
       await flushPromises();
-      expect(fetchMock).toHaveBeenCalledTimes(2);
-      await wrapper.get('[data-testid="palette-Button"]').trigger('click');
+      expect(fetchMock).toHaveBeenCalledTimes(3);
+      await addComponent(wrapper, 'Button');
       expect(getDraftSession()?.id).not.toBe(originalId);
-      completePublication(new Response(JSON.stringify({ ok: true, data: { pageId: 'orders', versionId: 'orders-v1', createdAt: '2026-09-25T00:00:00.000Z', manifest: {}, files: [], gates: [] } }), { status: 201 }));
+      completePublication(new Response(JSON.stringify({ ok: true, data: { fileId: 'file-test', title: '订单工作台', publications: [
+        { pageId: 'orders', versionId: 'orders-v1', createdAt: '2026-09-25T00:00:00.000Z', manifest: {}, files: [], gates: [] }
+      ] } }), { status: 201 }));
       await flushPromises();
       expect(getDraftSession()?.saved).toBe(false);
     } finally { vi.unstubAllGlobals(); }
   });
   it('redirects an empty design session to requirement intake', async () => {
     setToken('studio-token');
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(JSON.stringify({ ok: true, data: null }), { status: 200 })));
     const router = createStudioRouter();
     await router.push('/design'); await router.isReady();
     mount(App, { global: { plugins: [router] } });
     await flushPromises();
     expect(router.currentRoute.value.path).toBe('/requirements');
+    vi.unstubAllGlobals();
   });
 
   it('adds and edits real canvas nodes while synchronizing Monaco and the draft', async () => {
     const { wrapper } = await setup();
-    await wrapper.get('[data-testid="palette-Button"]').trigger('click');
-    expect(wrapper.text()).toContain('Button');
+    await addComponent(wrapper, 'Button');
+    expect(wrapper.text()).toContain('操作按钮');
     expect(monacoHarness.currentValue()).toContain('"type": "Button"');
     expect(getDraftSession()?.dslText).toContain('"type": "Button"');
 
@@ -182,9 +227,82 @@ describe('design editor', () => {
     expect(monacoHarness.currentValue()).toContain('核心客户');
   });
 
+  it('composes the Figma workspace and writes inline text edits through the validated draft history', async () => {
+    const { wrapper } = await setup();
+    expect(wrapper.find('.editor-topbar').exists()).toBe(true);
+    expect(wrapper.find('[aria-label="设计工具区"]').exists()).toBe(true);
+    expect(wrapper.get('[aria-label="设计资源"]').text()).toContain('Pages');
+    expect(wrapper.find('.canvas-workspace').exists()).toBe(true);
+    expect(wrapper.find('.canvas-column .design-chat').exists()).toBe(true);
+    expect(wrapper.find('.inspector-column').exists()).toBe(true);
+
+    await addComponent(wrapper, 'Text');
+    const text = wrapper.get('[data-pf-node-id="text-1"] .pf-text');
+    await text.trigger('dblclick');
+    (text.element as HTMLElement).textContent = '机器人研发中心';
+    await text.trigger('keydown', { key: 'Enter' });
+    const editedDsl = JSON.parse(getDraftSession()!.dslText) as { nodes: Array<{ id: string; props: { text?: string } }> };
+    expect(editedDsl.nodes.find((node) => node.id === 'text-1')?.props.text).toBe('机器人研发中心');
+
+    await wrapper.get('[aria-label="撤销"]').trigger('click');
+    const undoneDsl = JSON.parse(getDraftSession()!.dslText) as { nodes: Array<{ id: string; props: { text?: string } }> };
+    expect(undoneDsl.nodes.find((node) => node.id === 'text-1')?.props.text).toBe('双击编辑文字');
+  });
+
+  it('places a library image on the artboard as one selected DSL layer', async () => {
+    const { wrapper } = await setup();
+    await wrapper.get('[aria-label="素材"]').trigger('click');
+    const assetCard = wrapper.get('[data-testid="asset-card-asset-workflow"]');
+    const dataTransfer = {
+      types: ['application/x-pulseflow-image-asset'],
+      setData: vi.fn(),
+      getData: (type: string) => type === 'application/x-pulseflow-image-asset' ? 'asset-workflow' : '',
+      effectAllowed: '',
+      dropEffect: 'none'
+    };
+    await assetCard.trigger('dragstart', { dataTransfer });
+    const pageCanvas = wrapper.get('.pulseflow-page');
+    vi.spyOn(pageCanvas.element, 'getBoundingClientRect').mockReturnValue({ left: 100, top: 50, right: 1380, bottom: 770, width: 1280, height: 720, x: 100, y: 50, toJSON: () => ({}) });
+    const zoom = Number(wrapper.get('[data-testid="canvas-zoom"]').text().replace('%', '')) / 100;
+    await pageCanvas.trigger('drop', { dataTransfer, clientX: 100 + 48 * zoom, clientY: 50 + 40 * zoom });
+    await flushPromises();
+
+    type ImageNode = { id: string; type: string; props: Record<string, unknown>; design?: { position?: { x: number; y: number } } };
+    const dsl = JSON.parse(getDraftSession()!.dslText) as { nodes: ImageNode[] };
+    expect(dsl.nodes).toContainEqual(expect.objectContaining({
+      id: 'generated-image-1', type: 'Image', props: expect.objectContaining({ assetId: 'asset-workflow' }),
+      design: expect.objectContaining({ position: { mode: 'absolute', x: 48, y: 40 } })
+    }));
+    expect(wrapper.get('[data-pf-node-id="generated-image-1"]').attributes('data-pf-node-selected')).toBe('true');
+    await wrapper.get('[aria-label="撤销"]').trigger('click');
+    expect(JSON.parse(getDraftSession()!.dslText).nodes).not.toEqual(expect.arrayContaining([expect.objectContaining({ id: 'generated-image-1' })]));
+  });
+
+  it('duplicates a selected canvas layer with Alt-drag and undoes the copy as one edit', async () => {
+    const { wrapper } = await setup();
+    const pageCanvas = wrapper.get('.pulseflow-page');
+    const card = wrapper.get('[data-pf-node-id="card"]');
+    vi.spyOn(pageCanvas.element, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 1280, bottom: 720, width: 1280, height: 720, x: 0, y: 0, toJSON: () => ({}) });
+    vi.spyOn(card.element, 'getBoundingClientRect').mockReturnValue({ left: 100, top: 120, right: 420, bottom: 300, width: 320, height: 180, x: 100, y: 120, toJSON: () => ({}) });
+
+    await card.trigger('pointerdown', { button: 0, pointerId: 30, clientX: 110, clientY: 130, altKey: true });
+    await wrapper.get('.preview-panel').trigger('pointermove', { pointerId: 30, clientX: 158, clientY: 170, altKey: true });
+    await wrapper.get('.preview-panel').trigger('pointerup', { pointerId: 30, clientX: 158, clientY: 170, altKey: true });
+    await flushPromises();
+
+    type PositionedNode = { id: string; design?: { position?: { mode: string; x: number; y: number } } };
+    const dsl = JSON.parse(getDraftSession()!.dslText) as { nodes: PositionedNode[] };
+    expect(dsl.nodes).toHaveLength(2);
+    expect(dsl.nodes[0]?.id).toBe('card');
+    expect(dsl.nodes[1]).toMatchObject({ id: 'card-copy', design: { position: { mode: 'absolute', x: 148, y: 160 } } });
+    expect(wrapper.get('[data-pf-node-id="card-copy"]').attributes('data-pf-node-selected')).toBe('true');
+    await wrapper.get('[aria-label="撤销"]').trigger('click');
+    expect(JSON.parse(getDraftSession()!.dslText).nodes).toHaveLength(1);
+  });
+
   it('adds an image component with bundled asset choices and editable alt, fit and ratio', async () => {
     const { wrapper } = await setup();
-    await wrapper.get('[data-testid="palette-Image"]').trigger('click');
+    await addComponent(wrapper, 'Image');
     expect(wrapper.get('[data-testid="prop-assetId"]').element.tagName).toBe('SELECT');
     expect(wrapper.get('[data-testid="prop-assetId"]').findAll('option').map((option) => option.element.value)).toEqual([
       'asset-workflow', 'asset-analytics', 'asset-collaboration'
@@ -255,7 +373,7 @@ describe('design editor', () => {
   it('applies a valid conversation refinement to the current canvas and draft', async () => {
     const { wrapper } = await setup();
     expect(wrapper.find('.canvas-column .design-chat').exists()).toBe(true);
-    expect(wrapper.find('.design-meta').text()).toContain('管理平台');
+    expect(wrapper.get('[data-testid="page-kind"]').element).toHaveProperty('checked', true);
     const revised = { ...result, pageDsl: { ...result.pageDsl, title: '企业客户总览' } };
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ ok: true, data: revised }), { status: 200 }));
     vi.stubGlobal('fetch', fetchMock);
@@ -369,7 +487,8 @@ describe('design editor', () => {
     await wrapper.get('[data-testid="enter-design"]').trigger('click');
     await flushPromises();
     expect(router.currentRoute.value.path).toBe('/design');
-    expect(wrapper.text()).toContain('组件工具架');
+    expect(wrapper.get('[aria-label="文件"]').attributes('aria-pressed')).toBe('true');
+    expect(wrapper.get('[role="tree"]').attributes('aria-label')).toBe('页面图层');
   });
 
   it('uses valid Monaco JSON to refresh the canvas', async () => {
@@ -399,7 +518,7 @@ describe('design editor', () => {
     const invalid = '{\n  "schemaVersion": 1,\n  "nodes": [';
     monacoHarness.change(invalid);
     await vi.advanceTimersByTimeAsync(300); await flushPromises();
-    await wrapper.get('[data-testid="palette-Button"]').trigger('click');
+    await addComponent(wrapper, 'Button');
     expect(monacoHarness.currentValue()).toBe(invalid);
     expect(wrapper.text()).toContain('json.parse');
     expect(wrapper.find('[data-testid="canvas-node-button-1"]').exists()).toBe(true);
@@ -411,40 +530,40 @@ describe('design editor', () => {
     const { wrapper } = await setup();
     const pending = JSON.stringify({ ...result.pageDsl, title: '正在输入' }, null, 2);
     monacoHarness.change(pending);
-    await wrapper.get('[data-testid="palette-Button"]').trigger('click');
+    await addComponent(wrapper, 'Button');
     expect(monacoHarness.currentValue()).toContain('正在输入');
     expect(monacoHarness.currentValue()).toContain('"type": "Button"');
     expect(wrapper.find('[data-testid="canvas-node-button-1"]').exists()).toBe(true);
     expect(getDraftSession()?.dslText).toContain('正在输入');
   });
 
-  it('moves siblings with accessible controls', async () => {
+  it('reorders sibling layers with drag and drop', async () => {
     const { wrapper } = await setup();
-    await wrapper.get('[data-testid="palette-Button"]').trigger('click');
-    await wrapper.get('[data-testid="move-up-button-1"]').trigger('click');
-    const nodes = wrapper.findAll('[data-testid^="canvas-node-"]');
-    expect(nodes[0]?.attributes('data-testid')).toBe('canvas-node-button-1');
+    await addComponent(wrapper, 'Button');
+    await wrapper.get('[data-testid="canvas-node-button-1"]').trigger('dragstart');
+    await wrapper.get('[data-testid="canvas-node-card"]').trigger('drop');
+    const saved = JSON.parse(getDraftSession()!.dslText) as T2uiResult['pageDsl'];
+    expect(saved.nodes.map((node) => node.id)).toEqual(['button-1', 'card']);
   });
 
   it('edits type-specific properties and operates nested nodes through canvas controls', async () => {
     const { wrapper } = await setup();
-    await wrapper.get('[data-testid="palette-Row"]').trigger('click');
+    await addComponent(wrapper, 'Row');
     await wrapper.get('[data-testid="prop-gutter"]').setValue('24');
-    await wrapper.get('[data-testid="palette-FormItem"]').trigger('click');
+    await addComponent(wrapper, 'FormItem');
     await wrapper.get('[data-testid="prop-label"]').setValue('公司');
     await wrapper.get('[data-testid="prop-fieldId"]').setValue('company');
-    await wrapper.get('[data-testid="palette-Input"]').trigger('click');
+    await addComponent(wrapper, 'Input');
     await wrapper.get('[data-testid="prop-placeholder"]').setValue('请输入公司');
     await wrapper.get('[data-testid="prop-disabled"]').setValue(true);
     expect(monacoHarness.currentValue()).toContain('请输入公司');
 
     await wrapper.get('[data-testid="canvas-node-row-1"]').trigger('click');
-    await wrapper.get('[data-testid="palette-Button"]').trigger('click');
+    await addComponent(wrapper, 'Button');
     await wrapper.get('[data-testid="prop-label"]').setValue('确认');
     await wrapper.get('[data-testid="prop-variant"]').setValue('dashed');
-    await wrapper.get('[data-testid="move-up-button-1"]').trigger('click');
     const row = wrapper.get('[data-testid="canvas-node-row-1"]');
-    expect(row.findAll('[data-testid^="canvas-node-"]')[0]?.attributes('data-testid')).toBe('canvas-node-button-1');
+    expect(row.find('[data-testid="canvas-node-button-1"]').exists()).toBe(true);
 
     await wrapper.get('[data-testid="canvas-node-form-item-1"]').trigger('keydown.enter');
     expect(wrapper.find('[data-testid="prop-fieldId"]').exists()).toBe(true);
@@ -470,7 +589,7 @@ describe('design editor', () => {
     await wrapper.get('[data-testid="canvas-node-tag"]').trigger('click');
     await wrapper.get('[data-testid="prop-text"]').setValue('处理中');
     await wrapper.get('[data-testid="canvas-node-header"]').trigger('click');
-    await wrapper.get('[data-testid="palette-Badge"]').trigger('click');
+    await addComponent(wrapper, 'Badge');
     expect(wrapper.find('[data-testid="canvas-node-badge-1"]').exists()).toBe(true);
     expect(getDraftSession()?.dslText).toContain('处理中');
   });
@@ -491,14 +610,20 @@ describe('design editor', () => {
       }
     };
     const { wrapper } = await setup('/design', dragResult);
-    await wrapper.get('[data-testid="canvas-node-button"]').trigger('dragstart');
-    await wrapper.get('[data-testid="drop-into-card"]').trigger('drop');
-    await wrapper.get('[data-testid="canvas-node-button"]').trigger('dragstart');
-    await wrapper.get('[data-testid="drop-into-form"]').trigger('drop');
-    await wrapper.get('[data-testid="canvas-node-button"]').trigger('dragstart');
-    await wrapper.get('[data-testid="drop-into-row"]').trigger('drop');
-    await wrapper.get('[data-testid="canvas-node-tag"]').trigger('dragstart');
-    await wrapper.get('[data-testid="drop-into-header"]').trigger('drop');
+    const dataTransfer = {
+      values: new Map<string, string>(),
+      setData(key: string, value: string) { this.values.set(key, value); },
+      getData(key: string) { return this.values.get(key) ?? ''; },
+      effectAllowed: 'all', dropEffect: 'none'
+    };
+    const dragNodeInto = async (nodeId: string, targetId: string) => {
+      await wrapper.get(`[data-pf-node-id="${nodeId}"]`).trigger('dragstart', { dataTransfer });
+      await wrapper.get(`[data-pf-node-id="${targetId}"]`).trigger('drop', { dataTransfer, clientY: 50 });
+    };
+    await dragNodeInto('button', 'card');
+    await dragNodeInto('button', 'form');
+    await dragNodeInto('button', 'row');
+    await dragNodeInto('tag', 'header');
     const source = JSON.parse(getDraftSession()?.dslText ?? '{}') as T2uiResult['pageDsl'];
     expect(source.nodes.find((node) => node.id === 'row')?.children[0]?.id).toBe('button');
     expect(source.nodes.find((node) => node.id === 'header')?.slots[0]).toMatchObject({ name: 'tags', children: [expect.objectContaining({ id: 'tag' })] });

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import type { GateResult } from './publication-api';
+import type { GateResult, ProjectPageResult } from './publication-api';
 
-defineProps<{ gates: readonly GateResult[]; versionId: string; pending: boolean; error: string }>();
+defineProps<{ gates: readonly GateResult[]; versionId: string; pending: boolean; error: string; pages?: readonly ProjectPageResult[] }>();
 defineEmits<{ publish: [] }>();
 
 const labels: Record<GateResult['id'], string> = {
@@ -11,14 +11,24 @@ const hardGates = ['dsl', 'preview-compile', 'template-build'] as const;
 </script>
 
 <template>
-  <section class="publish-panel" aria-label="页面发布" data-testid="publish">
+  <section class="publish-panel" aria-label="项目发布" data-testid="publish">
     <header><div><span class="kicker">RELEASE CONTROL</span><h2>发布检查</h2></div><span data-testid="publish-status">{{ versionId ? '已发布' : '待发布' }}</span></header>
-    <ol class="gates">
+    <ol v-if="!pages?.length" class="gates">
       <li v-for="id in hardGates" :key="id" :class="gates.find((gate) => gate.id === id)?.status">
         <strong>{{ labels[id] }}</strong><span>{{ gates.find((gate) => gate.id === id)?.status === 'passed' ? '通过' : gates.find((gate) => gate.id === id)?.status === 'failed' ? '失败' : '待运行' }}</span>
       </li>
     </ol>
-    <p v-if="versionId" class="version">版本 {{ versionId }}</p>
+    <p v-if="versionId && !pages?.length" class="version">版本 {{ versionId }}</p>
+    <ol v-if="pages?.length" class="project-page-results" data-testid="project-page-results">
+      <li v-for="page in pages" :key="page.pageId" :class="page.status">
+        <strong>{{ page.pageId }}</strong>
+        <span>{{ page.status === 'passed' ? '通过' : '失败' }}</span>
+        <span v-if="page.versionId" class="version">版本 {{ page.versionId }}</span>
+        <ul v-if="page.gates.some((gate) => gate.diagnostics.length)" class="diagnostics">
+          <li v-for="(diagnostic, index) in page.gates.flatMap((gate) => gate.diagnostics)" :key="index">{{ diagnostic.path }}：{{ diagnostic.message }}</li>
+        </ul>
+      </li>
+    </ol>
     <ul v-if="gates.some((gate) => gate.diagnostics.length)" class="diagnostics">
       <li v-for="(diagnostic, index) in gates.flatMap((gate) => gate.diagnostics)" :key="index">{{ diagnostic.path }}：{{ diagnostic.message }}</li>
     </ul>
@@ -37,6 +47,7 @@ const hardGates = ['dsl', 'preview-compile', 'template-build'] as const;
 .gates strong{font-weight:600;overflow-wrap:anywhere}.gates span{color:var(--pf-color-text-secondary)}
 .gates .passed{background:#f6ffed;border-color:#b7eb8f}.gates .passed span{color:var(--pf-color-success-text)}
 .gates .failed{background:#fff2f0;border-color:#ffccc7}.gates .failed span{color:var(--pf-color-error-text)}
+.project-page-results{display:grid;gap:var(--pf-space-2);margin:var(--pf-space-4) 0;padding:0;list-style:none}.project-page-results>li{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:var(--pf-space-1) var(--pf-space-3);border:var(--pf-border-width) solid var(--pf-color-border-secondary);border-radius:var(--pf-radius-sm);padding:var(--pf-space-2) var(--pf-space-3);font-size:var(--pf-font-size-sm)}.project-page-results>li.passed{background:#f6ffed;border-color:#b7eb8f}.project-page-results>li.failed{background:#fff2f0;border-color:#ffccc7}.project-page-results .version,.project-page-results .diagnostics{grid-column:1/-1;margin:0}.project-page-results .diagnostics{padding-left:var(--pf-space-5)}
 .diagnostics{padding-left:var(--pf-space-5);color:var(--pf-color-error-text);font-size:var(--pf-font-size-sm)}.diagnostics li+li{margin-top:var(--pf-space-1)}
 .publish-panel [role="alert"]{color:var(--pf-color-error-text)}
 .version{font-size:var(--pf-font-size-sm);font-weight:600;color:var(--pf-color-primary-strong)}

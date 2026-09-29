@@ -4,6 +4,7 @@ import { shallowRef } from 'vue';
 
 export interface DraftSession {
   id: string;
+  fileId: string;
   fieldsText: string;
   dslText: string;
   questions: SemanticQuestion[];
@@ -16,9 +17,13 @@ export interface DraftSession {
 type DraftEdits = Pick<DraftSession, 'fieldsText' | 'dslText' | 'questions'>;
 const draft = shallowRef<DraftSession | null>(null);
 export function getDraftSession(): DraftSession | null { return draft.value; }
-export function setDraft(value: T2uiResult): void {
+export function restoreDraftSession(value: DraftSession): void {
+  draft.value = { ...value, questions: value.questions.map((question) => ({ ...question })) };
+}
+export function setDraft(value: T2uiResult, fileId = `file-${crypto.randomUUID()}`): void {
   draft.value = {
     id: `draft-${crypto.randomUUID()}`,
+    fileId,
     fieldsText: JSON.stringify(value.entityFields, null, 2),
     dslText: JSON.stringify(value.pageDsl, null, 2),
     questions: value.semanticQuestions.map((question) => ({ ...question })),
@@ -37,6 +42,7 @@ export function setBlankDraft(title?: string): DraftSession {
   };
   const session: DraftSession = {
     id: `draft-${crypto.randomUUID()}`,
+    fileId: `file-${crypto.randomUUID()}`,
     fieldsText: '[]',
     dslText: JSON.stringify(pageDsl, null, 2),
     questions: [],

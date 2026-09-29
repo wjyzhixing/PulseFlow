@@ -25,6 +25,10 @@ export function generateImageAsset(input: { pageId: string; imagePlan: ImagePlan
   return request<GeneratedAsset>('/api/assets/generate', input);
 }
 
+export function uploadImageAsset(input: { pageId: string; imageDataUrl: string } & GuardedDraftInput): Promise<GeneratedAsset> {
+  return request<GeneratedAsset>('/api/assets/upload', input);
+}
+
 export async function getDraftRevision(draftId: string): Promise<string> {
   const token = getToken();
   if (!token) throw new Error('会话已过期，请重新登录');

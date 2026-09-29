@@ -26,6 +26,12 @@ describe('validateFieldValue', () => {
     expect(validateFieldValue(field, '12800138000')).toEqual([expect.objectContaining({ code: 'field.format.phone', path: 'value' })]);
   });
 
+  it('validates an email format', () => {
+    const field: EntityField = { ...baseField, rules: [{ kind: 'format', format: 'email' }] };
+    expect(validateFieldValue(field, 'robotics@example.com')).toEqual([]);
+    expect(validateFieldValue(field, 'not-an-email')).toEqual([expect.objectContaining({ code: 'field.format.email', path: 'value' })]);
+  });
+
   it('validates unified social credit code checksum', () => {
     const field: EntityField = { ...baseField, rules: [{ kind: 'format', format: 'creditCode' }] };
     expect(validateFieldValue(field, '91350211M000100Y46')).toEqual([]);

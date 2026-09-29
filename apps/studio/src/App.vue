@@ -17,7 +17,7 @@ const currentStage = computed(() => stageLabels[stage.value - 1]);
 </script>
 
 <template>
-  <ALayout class="studio-shell">
+  <ALayout class="studio-shell" :class="{ 'studio-shell--design': stage === 4 }">
     <ALayoutHeader class="topbar">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">P</span>
@@ -61,6 +61,11 @@ button, input, textarea { font: inherit; }
 button { cursor: pointer; }
 
 .studio-shell { min-height: 100vh; background: var(--pf-color-bg); }
+.studio-shell--design { width: 100%; height: 100vh; min-height: 0; overflow: hidden; }
+.studio-shell--design > .topbar, .studio-shell--design .rail, .studio-shell--design .mobile-workflow { display: none !important; }
+.studio-shell--design > .studio-workspace.ant-layout { display: flex; flex: 1; min-height: 0; height: 100%; overflow: hidden; }
+.studio-shell--design .canvas.ant-layout-content { width: 100%; min-width: 0; height: 100%; min-height: 0; padding: 0; overflow: hidden; }
+.studio-shell--design .canvas.design-canvas-shell { padding: 0; }
 .topbar.ant-layout-header {
   position: relative;
   z-index: 2;

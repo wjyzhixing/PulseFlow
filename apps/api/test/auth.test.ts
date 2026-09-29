@@ -58,4 +58,15 @@ describe('workspace authentication', () => {
       expect(limited.json()).toMatchObject({ ok: false, error: { code: 'rate.limited' } });
     } finally { await app.close(); }
   });
+
+  it('allows isolated environments to override the login rate limit', async () => {
+    const credential = ['secret', 'test', 'token'].join('-');
+    const app = buildApp({ workspaceToken: credential, dbPath: ':memory:', sessionRateLimit: { max: 50, timeWindow: '1 minute' } });
+    try {
+      const responses = await Promise.all(Array.from({ length: 8 }, () => app.inject({
+        method: 'POST', url: '/api/session/validate', payload: { token: credential }
+      })));
+      expect(responses.every((response) => response.statusCode === 200)).toBe(true);
+    } finally { await app.close(); }
+  });
 });

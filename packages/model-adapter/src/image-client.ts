@@ -8,7 +8,7 @@ import type { ImageModelConfig } from './config.js';
 import { ModelAdapterError } from './errors.js';
 
 const MAX_BYTES = 20 * 1024 * 1024;
-const MAX_PIXELS = 4_194_304;
+const MAX_PIXELS = 6_291_456;
 const MAX_PROMPT_CHARS = 4_000;
 const MAX_INFLATED_BYTES = MAX_PIXELS * 9 + 4_194_304;
 const PNG_SIGNATURE = Uint8Array.from([137, 80, 78, 71, 13, 10, 26, 10]);
